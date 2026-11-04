@@ -33,7 +33,7 @@ export function App() {
   if (isCapsule) {
     return (
       <Ctx.Provider value={ctx}>
-        <CapsulePage />
+        <CapsulePage notice={toast?.kind === 'error' ? toast.text : undefined} onCloseNotice={() => setToast(null)} />
       </Ctx.Provider>
     );
   }

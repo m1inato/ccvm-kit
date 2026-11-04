@@ -18,6 +18,7 @@ export interface Bridge {
   act(name: string, args: unknown[]): Promise<unknown>;
   onSnapshot(cb: (s: Snapshot) => void): () => void;
   onNavigate(cb: (route: string) => void): () => void;
+  capsuleSize?(width: number, height: number): void;
 }
 
 declare global {

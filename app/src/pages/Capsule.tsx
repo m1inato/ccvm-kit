@@ -1,10 +1,30 @@
 // 桌面胶囊：平时只占一条「受保护 · 出口 IP · 项目 · 计时」；做完或出问题时下面弹一句字幕。
+// 窗口跟着内容伸缩（主进程按这里量到的大小调整），透明的空白处不挡住下面的窗口。
+import { useLayoutEffect, useRef } from 'react';
 import { duration } from '../../core/status';
-import { act, useApp } from '../api';
+import { act, getBridge, useApp } from '../api';
 import { Dot } from '../components/common';
 
-export function CapsulePage() {
+function useReportSize() {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const report = () => {
+      const r = el.getBoundingClientRect();
+      void getBridge().then((b) => b.capsuleSize?.(r.width, r.height));
+    };
+    report();
+    const ro = new ResizeObserver(report);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return ref;
+}
+
+export function CapsulePage({ notice, onCloseNotice }: { notice?: string; onCloseNotice: () => void }) {
   const { snap, now, run } = useApp();
+  const ref = useReportSize();
   const active = snap.projects.filter((p) => p.claudeSessions > 0).sort((a, b) => a.claudeSince - b.claudeSince)[0];
   const ip = snap.level === 'error'
     ? snap.issues[0]?.kind === 'egress_changed' ? snap.egress.vm ?? snap.egress.host : undefined
@@ -12,8 +32,9 @@ export function CapsulePage() {
   const caption = snap.captions[snap.captions.length - 1];
   const open = (route?: string) => run(() => act('openMain', route));
   return (
-    <div className="capsule-wrap">
-      <div className={`capsule ${snap.level}`} onDoubleClick={() => open()}>
+    <div className="capsule-wrap" ref={ref}>
+      {/* 整条胶囊是拖动区域：macOS 不会把拖动区域里的鼠标事件交给页面，所以打开主窗口只靠右边的按钮 */}
+      <div className={`capsule ${snap.level}`}>
         <Dot level={snap.level} />
         <span>{snap.checking ? '正在检查' : snap.headline}</span>
         {ip && (
@@ -65,6 +86,17 @@ export function CapsulePage() {
                 </button>
               </>
             )}
+          </div>
+        </div>
+      )}
+      {notice && (
+        <div className="caption error">
+          <span>{notice}</span>
+          <div className="row">
+            <span className="spacer" />
+            <button className="btn sm ghost" onClick={onCloseNotice}>
+              知道了
+            </button>
           </div>
         </div>
       )}
