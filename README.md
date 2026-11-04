@@ -159,6 +159,8 @@ bash verification/run.sh
 
 检查仅使用合成配置和临时目录，不启动 VM 或修改 Clash。CI 在 Linux 和 macOS 运行这些检查，并在独立 Linux network namespaces 中验证真实 nftables 规则。
 
+本次发行已完成本地 macOS 与 Ubuntu VM 验证；GitHub 托管 CI 未能启动，执行状态详见 [验证记录](verification/RESULTS.md)。
+
 提交所有发布文件后：
 
 ```bash

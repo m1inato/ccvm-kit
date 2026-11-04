@@ -1,5 +1,19 @@
 # 验证方式与范围
 
+## 2.2.0 发行时的执行记录
+
+2026-11-04 的实际执行结果：
+
+| 环境 | 检查 | 结果 |
+|---|---|---|
+| macOS 本地 | 13 项 Clash 脚本用例、12 项 Python 用例、Bash 语法、发布内容检查 | 通过 |
+| macOS 本地 | 发布包解压后运行完整离线检查 | 通过 |
+| Ubuntu 24.04 ARM64 VM | 12 项 Python 用例、Bash 语法、发布内容检查 | 通过 |
+| Ubuntu 24.04 ARM64 VM | 独立 network namespaces 中 22 项真实 nftables 功能场景 | 通过，fails=0 |
+| GitHub 托管 macOS / Ubuntu runner | 工作流已配置，平台未启动任务 | 待执行 |
+
+Linux 补测使用临时目录与独立网络命名空间，未切换现有 VM 的 TUN；结束后防火墙及 TUN 服务仍处于 active 状态。Linux VM 未另装 Node.js，Clash JavaScript 用例在 macOS 上运行。
+
 ## 本仓库提供的自动化检查
 
 运行 `bash verification/run.sh`。需要 Bash、Node.js ≥ 18、Python 3.10+ 与 Git；不需要 Lima、代理订阅或 Claude 账号。
