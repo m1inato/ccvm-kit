@@ -12,6 +12,8 @@ extraResources:
     to: kit
 mac:
   category: public.app-category.developer-tools
+  # 构建时由 build/make-icon.mjs 画出来、iconutil 转换（不进仓库）
+  icon: build/icon.icns
   target:
     - target: dmg
       arch: [arm64]

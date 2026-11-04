@@ -29,6 +29,7 @@
 - 新增 `upgrade.sh` 与 VM 内 `guest/upgrade.sh`：按 `/var/lib/ccvm/level` 给已部署的 VM 补装后来新加的软件包（第 1 步：`git`、`tmux`），不碰网络配置，完成后自动完整验收。新装的 VM 由 `install.sh` 直接写入当前级别。`workspace.sh list` 输出 `tmux_installed`、`vm_level`、`vm_level_target`；桌面端在需要时显示灰色的「VM 需要补装软件包」卡片（不算出错），补装是后台任务。
 - 会话改名：`workspace.sh rename-session <旧名> <新名>`（检查 id `session.rename`）；项目页双击会话名改名，内嵌终端的标签跟着换名。
 - 桌面端浅色主题：设置 → 通用 → 外观（跟随系统 / 深色 / 浅色），胶囊、主窗口底色和内嵌终端配色一起变。
+- App 图标在构建时由 `app/build/make-icon.mjs` 画出（深色圆角方块 + 状态点绿色的盾牌），PNG 只用 Node 自带的 zlib 编码，macOS 上用 `iconutil` 转成 `.icns`；产物不进仓库，没有 `iconutil` 时只生成 PNG。
 - 桌面胶囊修复：窗口跟内容一样大（原来 480×170 的透明窗口会挡住下面窗口的点击）；按钮第一下就能点（`acceptFirstMouse`）；打开胶囊不再隐藏 Dock 图标；显示器变化后拉回屏幕内；胶囊里的操作失败时显示原因。
 
 - 打包不再生成校验文件；桌面端判断节点是否变化改为逐字段比较内容。项目不使用这类哈希，规则见 `AGENTS.md`。

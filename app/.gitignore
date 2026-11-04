@@ -3,3 +3,5 @@ dist/
 dist-electron/
 release/
 build/kit/
+build/icon.iconset/
+build/icon.icns

@@ -67,7 +67,8 @@ core/        不依赖 Electron 的逻辑，可以在任何平台测试
   controller.ts  定时检查、任务、快照
 electron/    主进程（菜单栏、胶囊、主窗口、通知）与沙盒预加载
 src/         React 界面
-build/       打包脚本：copy-kit.mjs 只复制 Git 跟踪的套件文件
+build/       打包脚本：copy-kit.mjs 只复制 Git 跟踪的套件文件；make-icon.mjs 构建时画出 App 图标
+             （PNG 用 Node 自带的 zlib 编码，macOS 上再用 iconutil 转成 .icns；产物不进仓库）
 ```
 
 ## 安全上的做法
