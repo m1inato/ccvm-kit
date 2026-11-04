@@ -11,10 +11,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import {
-  buildCoreConfig, buildProbeConfig, CORE_LABEL, CORE_PORT, coreConfigProblems, launchAgentPlist, MIHOMO_MIN,
+  buildCoreConfig, buildProbeConfig, CORE_LABEL, CORE_PORT, coreConfigProblems, DEFAULT_LATENCY_URL, latencyUrlProblem, launchAgentPlist, MIHOMO_MIN,
   nodeFromConfig, parseDhcpDns, parseConnections, parseLaunchctlPrint, parseMihomoVersion, parseSubscription, physicalInterface,
   subscriptionUrlProblem, maskSubscription, versionAtLeast, type CoreConnection, type NodeInfo, type RawNode,
 } from './mihomo';
+
+const LATENCY_TIMEOUT = 5000;
 
 export type ExecFn = (cmd: string, args: string[], timeoutMs?: number) => Promise<{ code: number | null; stdout: string; stderr: string }>;
 
@@ -67,7 +69,17 @@ export interface CoreStatus {
   stopped?: CoreState['stopped'];
   latency: Record<string, number | null>;
   latencyAt?: number;
+  /** 上次测延迟实际用的地址；测过才有 */
+  latencyUrl?: string;
+  /** 上次测延迟是否开了统一延迟（不计建连和握手） */
+  latencyUnified?: boolean;
   checkedAt: number;
+}
+
+export interface LatencyResult {
+  results: Record<string, number | null>;
+  url: string;
+  unifiedDelay: boolean;
 }
 
 /** 两个节点的全部字段是否完全相同（键排序后逐项比较内容）。地址、端口、密码任何一项变了就不同。 */
@@ -86,6 +98,7 @@ export class CoreManager {
   private state: CoreState;
   private latency: Record<string, number | null> = {};
   private latencyAt?: number;
+  private latencyUrl?: string;
   private mihomoPath?: string;
   private mihomoVersion?: string;
   private now: () => number;
@@ -151,6 +164,8 @@ export class CoreManager {
       stopped: this.state.stopped,
       latency: this.latency,
       latencyAt: this.latencyAt,
+      latencyUrl: this.latencyUrl,
+      latencyUnified: this.latencyUrl ? true : undefined,
       checkedAt: this.now(),
     };
   }
@@ -383,8 +398,13 @@ export class CoreManager {
     return parseConnections(json);
   }
 
-  /** 测延迟：重新下载订阅（只在内存里），临时起一个没有任何入口的 mihomo，逐个节点访问 generate_204，测完就删 */
-  async latencyTest(): Promise<Record<string, number | null>> {
+  /**
+   * 测延迟：重新下载订阅（只在内存里），临时起一个没有任何入口的 mihomo（统一延迟），逐个节点访问测试地址，测完就删。
+   * 每个节点先测一次热身（临时核心是冷启动的），取第二次的结果；第二次失败才记为超时。
+   */
+  async latencyTest(testUrl = DEFAULT_LATENCY_URL): Promise<LatencyResult> {
+    const problem = latencyUrlProblem(testUrl);
+    if (problem) throw new Error(problem);
     await this.detect();
     if (!this.mihomoPath) throw new Error('找不到 mihomo：brew install mihomo');
     const url = this.deps.secrets.get();
@@ -406,25 +426,31 @@ export class CoreManager {
       await waitFor(() => fs.existsSync(sock), 8000);
       const names = parsed.raw.map((n) => n.name);
       let next = 0;
+      const probe = async (name: string): Promise<number | null> => {
+        try {
+          const r = (await unixGet(sock, `/proxies/${encodeURIComponent(name)}/delay?timeout=${LATENCY_TIMEOUT}&url=${encodeURIComponent(testUrl)}`, LATENCY_TIMEOUT + 2000)) as { delay?: number };
+          return typeof r?.delay === 'number' ? r.delay : null;
+        } catch {
+          return null;
+        }
+      };
       const worker = async () => {
         while (next < names.length) {
           const name = names[next++];
-          try {
-            const r = (await unixGet(sock, `/proxies/${encodeURIComponent(name)}/delay?timeout=4000&url=${encodeURIComponent('https://www.gstatic.com/generate_204')}`, 6000)) as { delay?: number };
-            result[name] = typeof r?.delay === 'number' ? r.delay : null;
-          } catch {
-            result[name] = null;
-          }
+          await probe(name); // 热身：结果不用
+          result[name] = await probe(name);
         }
       };
-      await Promise.all([worker(), worker(), worker(), worker()]);
+      // 热身让每个节点测两次，并发开到 8，节点多时也不至于等太久
+      await Promise.all(Array.from({ length: 8 }, worker));
     } finally {
       child.kill('SIGTERM');
       fs.rmSync(tmp, { recursive: true, force: true });
     }
     this.latency = result;
     this.latencyAt = this.now();
-    return result;
+    this.latencyUrl = testUrl;
+    return { results: result, url: testUrl, unifiedDelay: true };
   }
 
   private save(): void {

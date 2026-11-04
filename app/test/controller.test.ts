@@ -128,6 +128,15 @@ describe('Controller end to end', () => {
     expect(() => c.updateSettings({ vmName: '../x' })).toThrow();
   });
 
+  it('settings: latency test URL must be http(s) without credentials', () => {
+    c = make();
+    expect(c.settings.latencyTestUrl).toBe('https://www.gstatic.com/generate_204');
+    expect(c.updateSettings({ latencyTestUrl: 'http://cp.cloudflare.com/generate_204' }).latencyTestUrl).toBe('http://cp.cloudflare.com/generate_204');
+    expect(() => c.updateSettings({ latencyTestUrl: 'https://u:p@example.com/' })).toThrow(/账号/);
+    expect(() => c.updateSettings({ latencyTestUrl: 'file:///etc/passwd' })).toThrow();
+    expect(c.settings.latencyTestUrl).toBe('http://cp.cloudflare.com/generate_204');
+  });
+
   it('settings: terminal app is one of Terminal / iTerm / Ghostty', () => {
     c = make();
     expect(c.updateSettings({ terminalApp: 'Ghostty' }).terminalApp).toBe('Ghostty');

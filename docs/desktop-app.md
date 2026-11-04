@@ -50,7 +50,7 @@
 
 - 真实 mihomo 的集成测试（`app/test/mihomo-real.test.ts`）在这个容器里没跑：按你的决定没有在这里编译 mihomo。它会在 CI 的 macOS 任务里用 Homebrew 的 mihomo 跑，也可以在 Mac 上用 `MIHOMO_BIN=$(which mihomo) npm test` 跑。它核对：流量经过节点、非回环地址连不上入口、不开 TCP 控制口和 DNS 监听、节点停了不会直连、启动时不下载 geo 数据。
 - DHCP DNS 在 Wi-Fi / 热点 / 有线之间切换时的更新，`launchctl bootstrap` / `bootout` 在各 macOS 版本上的行为，都要上机验证。
-- 测延迟用的测试地址是 `https://www.gstatic.com/generate_204`；在一些网络下可能需要换。
+- 测延迟默认访问 `https://www.gstatic.com/generate_204`，可以在 设置 → 网络出口 里改（只接受不带账号密码的 http / https 地址）。口径和 Clash Verge 对齐：临时核心开 `unified-delay`（不计建连和握手；正式核心不开，它不影响流量走哪里），每个节点先热身一次、取第二次的结果，超时 5 秒。想和 Clash Verge 的数字对得上，就填它设置里的同一个测试地址。
 
 ## M4 工作流怎么做的
 

@@ -140,6 +140,7 @@ function initial(scenario: string): Snapshot {
       vmName: 'ccvm', limaHome: '~/.lima-ccvm', stateDir: '~/Library/Application Support/CCVM/state', checkIntervalMin: 10,
       showCapsule: true, terminalApp: 'Terminal', launchAtLogin: true, egressMode: 'builtin', nodeName: '示例节点 · 东京 01',
       claudeLoginConfirmed: true, welcomeDone: true, hooksEnabled: true, sharedFolders: [], sharesEnabled: false,
+      latencyTestUrl: 'https://www.gstatic.com/generate_204',
     },
     shares: { applied: [], pendingApply: false, problems: {} },
     paths: { kit: '/Applications/CCVM.app/Contents/Resources/kit', state: '~/Library/Application Support/CCVM/state', baselineFile: 'expected-ip.txt', jobs: 'jobs' },
@@ -387,8 +388,9 @@ export function createMockBridge(): Bridge {
     latencyTest: async () => {
       await sleep(1200);
       const latency = { [NODES[0].name]: 86, [NODES[1].name]: 92, [NODES[2].name]: 121, [NODES[3].name]: null };
-      update({ core: { ...snap.core!, latency, latencyAt: Date.now() } });
-      return latency;
+      const url = snap.settings.latencyTestUrl;
+      update({ core: { ...snap.core!, latency, latencyAt: Date.now(), latencyUrl: url, latencyUnified: true } });
+      return { results: latency, url, unifiedDelay: true };
     },
     refreshCore: async () => undefined,
     killSession: async (name: string) => {

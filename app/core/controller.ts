@@ -8,6 +8,7 @@ import { limaEnv, parseLoginPath, scriptEnv, validateSettingsPaths } from './env
 import { JobStore } from './jobs';
 import type { CoreManager } from './egress';
 import { isIPv4, gitUrlProblem, parseLimaList, renderClashScript, toProject } from './parsers';
+import { DEFAULT_LATENCY_URL, latencyUrlProblem } from './mihomo';
 import { MATRIX } from './report';
 import { runCommand, runScript } from './runner';
 import { shareLines, sharePathProblem, sharesFileContent } from './shares';
@@ -85,6 +86,7 @@ export function defaultSettings(home: string, dataDir: string): Settings {
     hooksEnabled: false,
     sharedFolders: [],
     sharesEnabled: false,
+    latencyTestUrl: DEFAULT_LATENCY_URL,
   };
 }
 
@@ -133,6 +135,7 @@ export class Controller extends EventEmitter {
     const folders = (this.settings as { sharedFolders?: unknown }).sharedFolders;
     this.settings.sharedFolders = Array.isArray(folders) ? folders.filter((f): f is string => typeof f === 'string') : [];
     this.settings.sharesEnabled = this.settings.sharesEnabled === true;
+    if (latencyUrlProblem(this.settings.latencyTestUrl)) this.settings.latencyTestUrl = DEFAULT_LATENCY_URL;
     this.state = readJson<Persisted>(this.file('app-state.json')) ?? {};
     this.jobs = new JobStore(path.join(host.dataDir, 'jobs'), host.kitDir, this.now);
     this.vm = { name: this.settings.vmName, status: 'Unknown' };
@@ -330,7 +333,7 @@ export class Controller extends EventEmitter {
   }
 
   async latencyTest() {
-    const r = await this.requireCore().latencyTest();
+    const r = await this.requireCore().latencyTest(this.settings.latencyTestUrl);
     await this.refreshCore();
     return r;
   }
@@ -727,7 +730,7 @@ export class Controller extends EventEmitter {
     const next: Settings = { ...this.settings };
     const allowed: (keyof Settings)[] = [
       'vmName', 'limaHome', 'stateDir', 'checkIntervalMin', 'showCapsule', 'terminalApp',
-      'launchAtLogin', 'nodeName', 'claudeLoginConfirmed', 'welcomeDone',
+      'launchAtLogin', 'nodeName', 'claudeLoginConfirmed', 'welcomeDone', 'latencyTestUrl',
     ];
     // hooksEnabled 只能经 setHooks 改（要在 VM 里装 / 删 hook）
     for (const key of allowed) {
@@ -739,6 +742,10 @@ export class Controller extends EventEmitter {
     // 出网方式只能经 setEgressMode 切换（要启停核心）
     next.nodeName = String(next.nodeName ?? '').slice(0, 200);
     for (const key of ['showCapsule', 'launchAtLogin', 'claudeLoginConfirmed', 'welcomeDone'] as const) next[key] = !!next[key];
+    if (patch.latencyTestUrl !== undefined) {
+      const bad = latencyUrlProblem(patch.latencyTestUrl);
+      if (bad) throw new Error(bad);
+    }
     const problem = validateSettingsPaths(next);
     if (problem) throw new Error(problem);
     const target = next.vmName !== this.settings.vmName || next.limaHome !== this.settings.limaHome || next.stateDir !== this.settings.stateDir;

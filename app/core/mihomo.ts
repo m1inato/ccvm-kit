@@ -129,7 +129,28 @@ export interface ProbeConfigInput {
   dnsServers: string[];
 }
 
-/** 测延迟用的临时配置：全部节点，但没有任何入口，只能经本机 socket 发起测试 */
+export const DEFAULT_LATENCY_URL = 'https://www.gstatic.com/generate_204';
+
+/** 测延迟的地址：只接受 http:// 或 https://，不能带账号密码。没问题返回 null */
+export function latencyUrlProblem(url: unknown): string | null {
+  if (typeof url !== 'string' || !url || url.length > 500 || /[\s\0]/.test(url)) return '测试地址不能为空，也不能有空白字符';
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return `不是有效的地址：${url}`;
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return '测试地址只能以 http:// 或 https:// 开头';
+  if (u.username || u.password) return '测试地址不能带账号或密码';
+  if (!u.hostname) return '测试地址缺少主机名';
+  return null;
+}
+
+/**
+ * 测延迟用的临时配置：全部节点，但没有任何入口，只能经本机 socket 发起测试。
+ * unified-delay 只影响延迟怎么算（去掉建连和握手时间，和 Clash Verge 的口径一致），不影响流量走哪里；
+ * 正式的核心配置保持 false。
+ */
 export function buildProbeConfig(input: ProbeConfigInput): string {
   if (!IFACE.test(input.iface)) throw new Error(`不是物理网卡：${input.iface}`);
   const nameservers = boundDns(input.dnsServers, input.iface);
@@ -140,6 +161,7 @@ export function buildProbeConfig(input: ProbeConfigInput): string {
     mode: 'rule',
     'log-level': 'error',
     'find-process-mode': 'off',
+    'unified-delay': true,
     'geo-auto-update': false,
     'interface-name': input.iface,
     'external-controller-unix': input.socketPath,

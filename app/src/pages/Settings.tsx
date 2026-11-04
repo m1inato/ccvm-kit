@@ -81,6 +81,7 @@ function Egress() {
           <CoreStatusLine snap={snap} />
           <CoreSetup snap={snap} />
           <CoreDetails snap={snap} />
+          <LatencyUrl />
         </>
       ) : (
         <ClashVergeEgress />
@@ -288,6 +289,29 @@ function Exec() {
       <div className="callout warn">
         设计里还有一个未解决的问题：被批准的命令（例如 xcodebuild test）会运行 VM 里写出的代码，而专用账户 ccvm-bot 在 Mac 上的网络不受限，可以绕过固定节点直接出网，也能连到 Mac 本机的 7897、9090 等端口。补上之前不会启用这个功能，详见设计方案。
       </div>
+    </div>
+  );
+}
+
+/** 测延迟的地址：和 Clash Verge 用同一个才对得上数字 */
+function LatencyUrl() {
+  const { snap } = useApp();
+  const save = useSave();
+  const [url, setUrl] = useState(snap.settings.latencyTestUrl);
+  const dirty = url.trim() !== snap.settings.latencyTestUrl;
+  return (
+    <div className="card pad col">
+      <h2>测延迟</h2>
+      <div className="row">
+        <input className="input grow mono" value={url} onChange={(e) => setUrl(e.target.value)} spellCheck={false} />
+        <button className="btn sm" disabled={!dirty} onClick={() => save({ latencyTestUrl: url.trim() }, '已保存测试地址')}>
+          保存
+        </button>
+      </div>
+      <span className="tiny faint">
+        想和 Clash Verge 的数字对得上，就填它设置里的同一个测试地址。只接受 http:// 或 https://，不能带账号密码。
+        测的时候开着「统一延迟」（不计建连和握手），每个节点先热身一次再取第二次的结果，超时 5 秒。
+      </span>
     </div>
   );
 }

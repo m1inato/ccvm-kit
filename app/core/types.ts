@@ -1,8 +1,8 @@
 // 主进程与界面共用的类型。界面只拿到 Snapshot，自己不做安全判断。
-import type { CoreStatus, PinnedNode } from './egress';
+import type { CoreStatus, LatencyResult, PinnedNode } from './egress';
 import type { CoreConnection, NodeInfo } from './mihomo';
 
-export type { CoreConnection, CoreStatus, NodeInfo, PinnedNode };
+export type { CoreConnection, CoreStatus, LatencyResult, NodeInfo, PinnedNode };
 
 export type Level = 'ok' | 'busy' | 'idle' | 'error';
 
@@ -221,6 +221,8 @@ export interface Settings {
   sharedFolders: string[];
   /** 总开关「允许 VM 访问共享文件夹」。关着时应用会写空的 shares.txt */
   sharesEnabled: boolean;
+  /** 测延迟访问的地址。想和 Clash Verge 的数字对得上，就填它设置里的同一个测试地址 */
+  latencyTestUrl: string;
 }
 
 export interface SharesState {
@@ -315,7 +317,7 @@ export interface Actions {
   clearSubscription(): Promise<void>;
   setCoreOptions(opts: { autoUpdate?: boolean; viaClashVerge?: boolean }): Promise<void>;
   coreConnections(): Promise<CoreConnection[]>;
-  latencyTest(): Promise<Record<string, number | null>>;
+  latencyTest(): Promise<LatencyResult>;
   refreshCore(): Promise<void>;
   killSession(name: string): Promise<boolean>;
   setHooks(enabled: boolean): Promise<Settings>;

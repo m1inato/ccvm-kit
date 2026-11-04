@@ -1,7 +1,7 @@
 import YAML from 'yaml';
 import { describe, expect, it } from 'vitest';
 import {
-  buildCoreConfig, buildProbeConfig, coreConfigProblems, launchAgentPlist, maskSubscription, nodeFromConfig,
+  buildCoreConfig, buildProbeConfig, coreConfigProblems, DEFAULT_LATENCY_URL, latencyUrlProblem, launchAgentPlist, maskSubscription, nodeFromConfig,
   parseConnections, parseDhcpDns, parseLaunchctlPrint, parseMihomoVersion, parseSubscription, physicalInterface,
   subscriptionUrlProblem, versionAtLeast, type RawNode,
 } from '../core/mihomo';
@@ -164,5 +164,22 @@ Network interfaces: utun4 en0
     });
     expect(list[0]).toMatchObject({ destination: '160.79.104.10:443', inbound: 'ccvm-in', chains: ['🇯🇵 示例节点 · 东京 01'], download: 2048 });
     expect(parseConnections(null)).toEqual([]);
+  });
+});
+
+describe('latency test alignment with Clash Verge', () => {
+  const base = { dnsServers: ['192.0.2.53'], iface: 'en0', socketPath: '/tmp/p.sock' };
+  const n: RawNode = { name: 'a', type: 'ss', server: 'a.example.com', port: 8388, cipher: 'aes-128-gcm', password: 'x' };
+  it('probe config uses unified delay; the real core config does not change', () => {
+    expect(YAML.parse(buildProbeConfig({ ...base, nodes: [n] }))['unified-delay']).toBe(true);
+    const core = YAML.parse(buildCoreConfig({ ...base, node: n }));
+    expect(core['unified-delay']).toBe(false);
+  });
+  it('accepts only http(s) test URLs without credentials', () => {
+    expect(latencyUrlProblem(DEFAULT_LATENCY_URL)).toBeNull();
+    expect(latencyUrlProblem('http://cp.cloudflare.com/generate_204')).toBeNull();
+    for (const bad of ['ftp://x/y', 'https://user:pw@x.example/', 'javascript:alert(1)', '', 'https://x .com/', 'not a url', 42]) {
+      expect(latencyUrlProblem(bad), String(bad)).not.toBeNull();
+    }
   });
 });

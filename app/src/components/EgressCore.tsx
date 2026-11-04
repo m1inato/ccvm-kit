@@ -126,7 +126,12 @@ export function CoreSetup({ snap, compact }: { snap: Snapshot; compact?: boolean
         <div className="card pad col">
           <div className="row">
             <h2 className="grow">节点</h2>
-            {core?.latencyAt && <span className="tiny faint">延迟测于 {relativeTime(core.latencyAt, now)}</span>}
+            {core?.latencyAt && (
+              <span className="tiny faint" title={core.latencyUrl}>
+                延迟测于 {relativeTime(core.latencyAt, now)}
+                {core.latencyUrl ? ` · ${core.latencyUrl} · 统一延迟：${core.latencyUnified ? '开' : '关'}` : ''}
+              </span>
+            )}
             <button className="btn sm" disabled={!!busy} onClick={() => doing('latency', () => act('latencyTest'))} title="临时起一个没有任何入口的核心，逐个节点访问测试地址，测完就关">
               {busy === 'latency' ? '测试中…' : '测延迟'}
             </button>
