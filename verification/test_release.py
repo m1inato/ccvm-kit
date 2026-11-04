@@ -1,5 +1,4 @@
 """Release boundaries: local files stay local, archives contain committed source."""
-import hashlib
 import importlib.util
 import os
 from pathlib import Path
@@ -19,7 +18,7 @@ spec.loader.exec_module(release_check)
 
 class ReleasePolicyTests(unittest.TestCase):
     def files(self):
-        return {"VERSION": b"2.2.0\n", "README.md": b"Generic kit\n",
+        return {"VERSION": b"2.2.0\n", "README.md": b"Generic kit\n", "AGENTS.md": b"rules\n",
                 "config/clash-verge-script.js": b'const NODE = "REPLACE_WITH_EXACT_NODE_NAME";\n',
                 "config/sing-box.json": b"{}\n"}
 
@@ -34,6 +33,22 @@ class ReleasePolicyTests(unittest.TestCase):
                 self.assertTrue(release_check.validate(files))
         files = self.files()
         files["config/clash-verge-script.js"] = b'const NODE = "Configured example node";\n'
+        self.assertTrue(release_check.validate(files))
+
+    def test_forbidden_hash_is_rejected_everywhere_but_agents_md(self):
+        # 测试数据现拼出来，免得测试文件本身违反规则
+        algo = "sha" + "256"
+        for name, content in [("scripts/x.sh", algo + "sum file"), ("app/core/x.ts", "createHash('" + algo + "')"),
+                              ("docs/x.md", "SHA-" + "256 校验"), ("scripts/y.sh", "shasum -a " + "256 f"),
+                              ("dist/" + algo.upper() + "SUMS.txt", "x")]:
+            with self.subTest(name=name):
+                self.assertTrue(release_check.validate(self.files() | {name: content.encode()}))
+        self.assertEqual(release_check.validate(self.files() | {"AGENTS.md": ("禁止 SHA-" + "256").encode()}), [])
+        self.assertEqual(release_check.validate(self.files() | {"notes.txt": b"sha1 and sha512 are not this rule"}), [])
+
+    def test_agents_md_is_required(self):
+        files = self.files()
+        del files["AGENTS.md"]
         self.assertTrue(release_check.validate(files))
 
     def test_machine_paths_and_credentials_are_rejected(self):
@@ -94,11 +109,11 @@ class PackagingTests(unittest.TestCase):
             with zipfile.ZipFile(zip_path) as archive:
                 self.assertEqual({n.rstrip("/") for n in archive.namelist()},
                                  {n.rstrip("/") for n in names})
-            before = hashlib.sha256(tar_path.read_bytes()).hexdigest()
+            before = tar_path.read_bytes()
             package()
-            self.assertEqual(hashlib.sha256(tar_path.read_bytes()).hexdigest(), before)
-            sums = (project / "dist" / (name + "-SHA256SUMS.txt")).read_text()
-            self.assertIn(before + "  " + name + ".tar.gz", sums)
+            self.assertEqual(tar_path.read_bytes(), before)  # 同一提交打出的包逐字节相同
+            self.assertEqual(sorted(p.name for p in (project / "dist").iterdir() if not p.name.startswith(".")),
+                             sorted([name + ".tar.gz", name + ".zip"]))  # 只有两个压缩包，没有校验文件
             # Releasing uncommitted source must fail rather than mix it into an archive.
             with (project / "README.md").open("a") as stream:
                 stream.write("\nUncommitted change\n")

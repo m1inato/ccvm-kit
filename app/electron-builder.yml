@@ -1,0 +1,21 @@
+# 不上 Mac App Store：沙盒不允许管理 Lima 这样的外部 VM 进程。
+appId: dev.ccvm.desktop
+productName: CCVM
+directories:
+  output: release
+files:
+  - dist/**
+  - dist-electron/**
+  - package.json
+extraResources:
+  - from: build/kit
+    to: kit
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch: [arm64]
+  hardenedRuntime: true
+  extendInfo:
+    LSUIElement: true
+    NSHumanReadableCopyright: CCVM

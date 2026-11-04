@@ -26,7 +26,7 @@
 | 5 | 放行规则是 `meta skuid 0` → 192.168.5.2:17897 | VM 里任何 root 进程都能直连 Mac 上的专用入口 | sing-box 改用官方包自带的 `sing-box` 系统用户 + ambient capabilities 运行，防火墙只放行这个 UID |
 | 6 | VM 内封了 NTP（UDP），时间问题靠"睡眠后重启 VM"，且对 Lima 版本没有要求 | Mac 睡眠后 VM 时钟落后 → TLS 报错、登录 token 异常 | Lima ≥ 2.1 的 guest agent 会每 10 秒经 vsock（不走网络）把 VM 时钟对齐到 Mac；`minimumLimaVersion: 2.1.0`，脚本也会检查版本 |
 | 7 | sing-box 精确锁死 1.14.4 | SagerNet 的 APT 仓库一旦不再提供这个补丁版本，新装就失败 | 只接受 1.14.x（同一套配置格式），装仓库里最新的补丁版本后 hold |
-| 8 | Ubuntu 镜像 URL 和 SHA-256 写死了日期目录 | 几个月后 Ubuntu 删掉旧目录，就会 404 | `base: template:_images/ubuntu-24.04`，用你本机 Lima 自带的镜像清单（带校验，失效时回落到官方 release 镜像） |
+| 8 | Ubuntu 镜像 URL 和校验值写死了日期目录 | 几个月后 Ubuntu 删掉旧目录，就会 404 | `base: template:_images/ubuntu-24.04`，用你本机 Lima 自带的镜像清单（带校验，失效时回落到官方 release 镜像） |
 | 9 | 安装脚本中途失败就"别重跑，重建 VM" | 很小的问题也得重来 | 所有下载放在启用防火墙之前；之后只做本地操作，所以可以直接重跑 |
 | 10 | 抓包验收全靠手工 | 容易漏做 | `leaktest.sh` 自动完成：TUN 正常时边产生流量边在物理网卡抓包，再停掉 TUN 验证断流；另外检查 cc 和 root 都碰不到 Mac 回环上的其他端口（日常代理口、控制器） |
 | 11 | sing-box 官方包自带示例服务（监听 `::` 的 Shadowsocks 服务端，密码固定） | 原脚本是装完才 mask，中间有一个窗口 | 安装 sing-box **之前**先 mask `sing-box.service` |

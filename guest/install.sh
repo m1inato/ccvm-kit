@@ -8,7 +8,7 @@ STAGE="${1:?用法: install.sh <包含配置文件的目录>}"
 PROXY_URL="http://192.168.5.2:17897"
 TRACE_URL="https://1.1.1.1/cdn-cgi/trace"
 SB_SERIES_RE='^1\.14\.[0-9]+'   # 配置按 sing-box 1.14 编写；只接受 1.14.x
-PKGS=(nftables curl ca-certificates tcpdump dnsutils)
+PKGS=(nftables curl ca-certificates tcpdump dnsutils git tmux)
 
 log() { printf '\033[1;34m[vm]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[vm] 错误:\033[0m %s\n' "$*" >&2; exit 1; }

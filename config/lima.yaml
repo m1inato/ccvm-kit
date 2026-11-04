@@ -5,7 +5,7 @@
 # 本方案封锁了 VM 的 NTP(UDP)，所以这是 VM 唯一的校时来源，Mac 睡眠唤醒后不必重启 VM。
 minimumLimaVersion: 2.1.0
 
-# 镜像 URL 与 SHA-256 取自你安装的 Lima 自带模板（带日期镜像 + 校验，失效时回落到官方 release 镜像），
+# 镜像 URL 与校验值取自你安装的 Lima 自带模板（带日期镜像，失效时回落到官方 release 镜像），
 # 不在这里写死日期目录，避免几个月后 404。
 base:
 - template:_images/ubuntu-24.04

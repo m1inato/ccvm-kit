@@ -2,7 +2,7 @@
 
 在 Apple Silicon Mac 上，以 Lima + Ubuntu Server 为 Claude Code 提供独立的工作环境。VM 内的 sing-box TUN 经 Clash Verge Rev 的专用回环入口使用一个指定节点；nftables 在 TUN 不可用时阻断直接出网。
 
-当前版本：**2.2.0**。本项目不附带订阅、代理节点、账户凭据或个人出口 IP；许可证暂未选择。
+当前版本：**2.3.0**（未发布）。本项目不附带订阅、代理节点、账户凭据或个人出口 IP；许可证暂未选择。
 
 ## 工作方式
 
@@ -19,6 +19,8 @@ Mac 的 127.0.0.1:17897 → CC-VM-FIXED → 你指定的具体节点
 - 固定节点可能有多个出口 IP；出口与基线不一致时，检查和日常入口会拒绝通过。
 
 网络设计与历史修复见 [设计说明](docs/design.md)。验证范围与可运行测试见 [验证说明](verification/RESULTS.md)。
+
+桌面端（菜单栏、桌面胶囊和主窗口）在 [`app/`](app/README.md)，它只调用这里的脚本；脚本永远可以脱离 App 单独使用。实现选择与对设计方案的修订见 [桌面端说明](docs/desktop-app.md)。
 
 ## 前置条件
 
@@ -118,6 +120,10 @@ Ubuntu 默认的 `~/.profile` 会在下次登录时加入已存在的 `~/.local/
 | 只读验收 | `bash scripts/check.sh` |
 | 断流与抓包测试 | `bash scripts/leaktest.sh` |
 | 确认新出口后更新基线 | `bash scripts/rebaseline.sh` |
+| 启停 VM（先检查 Lima 配置） | `bash scripts/vm.sh start` / `stop` |
+| VM 里的项目 | `bash scripts/workspace.sh list` |
+
+以上脚本都可以加 `--json`，输出给程序读的事件（格式见 [事件输出](docs/events.md)）。
 
 断流测试会短暂停止 VM 内的 TUN，执行前结束正在联网的任务。
 
@@ -167,7 +173,7 @@ bash verification/run.sh
 bash scripts/package.sh HEAD
 ```
 
-`dist/` 中会生成版本化 tar.gz、zip 和 SHA-256 校验文件。打包基于 Git 提交中的文件，并再次检查通用节点模板、本机文件边界与凭据模式；忽略的本地文件不会进入压缩包。
+`dist/` 中会生成版本化的 tar.gz 和 zip。打包基于 Git 提交中的文件，并再次检查通用节点模板、本机文件边界与凭据模式；忽略的本地文件不会进入压缩包。
 
 ## 使用边界
 

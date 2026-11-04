@@ -28,6 +28,34 @@ jobs:
       - name: Check scripts, configuration and release boundaries
         run: bash verification/run.sh
 
+  app:
+    name: Desktop app (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: app
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npm run typecheck
+      - name: Install mihomo for the real-core test (macOS)
+        if: runner.os == 'macOS'
+        run: brew install mihomo && echo "MIHOMO_BIN=$(command -v mihomo)" >> "$GITHUB_ENV"
+      - run: npm test
+      - run: npm run build
+
   firewall:
     name: nftables network namespaces
     runs-on: ubuntu-24.04

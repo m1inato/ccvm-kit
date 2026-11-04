@@ -21,15 +21,8 @@ trap 'rm -rf -- "${WORK:?}"' EXIT
 NAME="ccvm-kit-$VERSION"
 git -C "$KIT" archive --format=tar --prefix="$NAME/" "$COMMIT" | gzip -n > "$WORK/$NAME.tar.gz"
 git -C "$KIT" archive --format=zip --prefix="$NAME/" "$COMMIT" > "$WORK/$NAME.zip"
-(
-  cd "$WORK"
-  if command -v shasum >/dev/null; then
-    shasum -a 256 "$NAME.tar.gz" "$NAME.zip" > "$NAME-SHA256SUMS.txt"
-  else
-    sha256sum "$NAME.tar.gz" "$NAME.zip" > "$NAME-SHA256SUMS.txt"
-  fi
-)
-for suffix in .tar.gz .zip -SHA256SUMS.txt; do
+# 不生成校验文件（见 AGENTS.md）
+for suffix in .tar.gz .zip; do
   mv "$WORK/$NAME$suffix" "$DIST/$NAME$suffix"
   printf '%s\n' "$DIST/$NAME$suffix"
 done

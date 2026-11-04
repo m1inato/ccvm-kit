@@ -8,10 +8,89 @@ TRACE_URL="https://1.1.1.1/cdn-cgi/trace"   # 字面 IPv4（证书含 IP SAN）�
 LIMA_MIN="2.1.0"
 
 if [ -t 1 ]; then B=$'\033[1;34m'; G=$'\033[1;32m'; Y=$'\033[1;33m'; R=$'\033[1;31m'; N=$'\033[0m'; else B= G= Y= R= N=; fi
-info() { printf '%s==>%s %s\n' "$B" "$N" "$*"; }
-ok()   { printf '%s  ✔%s %s\n' "$G" "$N" "$*"; }
-warn() { printf '%s  !%s %s\n' "$Y" "$N" "$*" >&2; }
-die()  { printf '%s  ✘ %s%s\n' "$R" "$*" "$N" >&2; exit 1; }
+
+# ---------------------------------------------------------------- 输出
+# 默认是给人看的彩色文字。脚本收到 --json 时调用 json_on：fd 3 只写 NDJSON 事件（一行一个），
+# 原 stdout 的其他内容（limactl、apt 等）一律改到 stderr。事件格式见 docs/events.md。
+# 每个 JSON 运行以 end 事件结束；没有 end 的运行，调用方必须当作失败（不确定就当失败）。
+CCVM_JSON=0
+SCRIPT_ID="$(basename "$0" .sh)"
+
+json_str() {  # 任意文本 → JSON 字符串字面量。只用 tr/sed/awk 的可移植写法，兼容 macOS Bash 3.2
+  printf '%s' "$1" | LC_ALL=C tr '\t\r' '  ' | LC_ALL=C tr -d '\000-\010\013-\037\177' \
+    | LC_ALL=C sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' \
+    | LC_ALL=C awk 'BEGIN { printf "%s", "\"" } { if (NR > 1) printf "%s", "\\n"; printf "%s", $0 } END { printf "%s", "\"" }'
+}
+ev() {  # ev <type> [,"key":value...]
+  [ "$CCVM_JSON" = 1 ] || return 0
+  printf '{"v":1,"type":"%s"%s}\n' "$1" "${2:-}" >&3
+}
+ev_end() {
+  local rc="$1"
+  [ "${CCVM_EVENT_CHILD:-0}" = 1 ] && return 0
+  if [ "$rc" -eq 0 ]; then ev end ',"ok":true,"code":0'; else ev end ",\"ok\":false,\"code\":$rc"; fi
+}
+json_on() {
+  [ "$CCVM_JSON" = 1 ] && return 0
+  CCVM_JSON=1
+  exec 3>&1 1>&2
+  [ "${CCVM_EVENT_CHILD:-0}" = 1 ] || ev start ",\"script\":$(json_str "$SCRIPT_ID"),\"kit\":$(json_str "$(kit_version)")"
+  trap 'ev_end $?' EXIT
+}
+kit_version() { tr -d ' \n' < "$KIT/VERSION" 2>/dev/null || echo unknown; }
+
+info() { printf '%s==>%s %s\n' "$B" "$N" "$*"; ev log ",\"level\":\"info\",\"msg\":$(json_str "$*")"; }
+ok()   { printf '%s  ✔%s %s\n' "$G" "$N" "$*"; ev log ",\"level\":\"info\",\"msg\":$(json_str "$*")"; }
+warn() { printf '%s  !%s %s\n' "$Y" "$N" "$*" >&2; ev log ",\"level\":\"warn\",\"msg\":$(json_str "$*")"; }
+die()  { printf '%s  ✘ %s%s\n' "$R" "$*" "$N" >&2; ev error ",\"msg\":$(json_str "$*")"; exit 1; }
+# 带稳定 id 的检查项。pass/soft_fail 打印一行；pass_quiet 只发事件（命令行输出保持原样）；fail_check 发事件后终止。
+pass()       { local id="$1"; shift; printf '%s  ✔%s %s\n' "$G" "$N" "$*"; ev check ",\"id\":\"$id\",\"ok\":true,\"msg\":$(json_str "$*")"; }
+pass_quiet() { local id="$1"; shift; ev check ",\"id\":\"$id\",\"ok\":true,\"msg\":$(json_str "$*")"; }
+soft_fail()  { local id="$1"; shift; printf '%s  ✘%s %s\n' "$R" "$N" "$*"; ev check ",\"id\":\"$id\",\"ok\":false,\"msg\":$(json_str "$*")"; }
+fail_check() { local id="$1"; shift; ev check ",\"id\":\"$id\",\"ok\":false,\"msg\":$(json_str "$*")"; die "$*"; }
+step()  { local id="$1"; shift; info "$*"; ev step ",\"id\":\"$id\",\"msg\":$(json_str "$*")"; }
+value() { ev value ",\"key\":\"$1\",\"value\":$(json_str "$2")"; }
+
+# 处理各脚本共用的参数；其余参数原样留给脚本。用法：parse_common_args "$@"; set -- "${REST[@]+"${REST[@]}"}"
+parse_common_args() {
+  REST=()
+  local a
+  for a in "$@"; do
+    case "$a" in
+      --json) json_on ;;
+      *) REST+=("$a") ;;
+    esac
+  done
+}
+
+# 把 VM 内脚本的输出转成本地输出与事件。行格式：
+#   PASS <id> <说明> / FAIL <id> <说明> / VALUE <key> <值> / EGRESS <ip> / 其他行原样作为详情
+relay_guest() {
+  local line kind rest id msg
+  while IFS= read -r line; do
+    case "$line" in
+      PASS\ *|FAIL\ *)
+        kind="${line%% *}"; rest="${line#* }"; id="${rest%% *}"; msg="${rest#* }"
+        case "$id" in ""|*[!a-z0-9_.]*) id="guest.unknown"; msg="$rest" ;; esac
+        [ "$msg" = "$rest" ] && [ "$id" != guest.unknown ] && msg="$id"
+        if [ "$kind" = PASS ]; then pass "$id" "$msg"; else soft_fail "$id" "$msg"; fi
+        ;;
+      VALUE\ *)
+        rest="${line#VALUE }"; id="${rest%% *}"; msg="${rest#* }"
+        [ "$msg" = "$rest" ] && msg=""
+        case "$id" in ""|*[!a-z0-9_]*) ;; *) value "$id" "$msg" ;; esac
+        ;;
+      EGRESS|EGRESS\ *) msg="${line#EGRESS}"; value vm_egress "${msg# }" ;;
+      *)
+        printf '      %s\n' "$line"
+        ev log ",\"level\":\"detail\",\"msg\":$(json_str "$line")"
+        ;;
+    esac
+  done
+}
+
+# 尽早打开 JSON 模式，让配置错误也能以事件报告。source 时 $* 就是调用脚本的参数。
+case " $* " in *" --json "*) json_on ;; esac
 
 # 本地配置只包含用户选择的实例名和路径，不写回发布模板。
 # 显式 CCVM_* 环境变量 > 本地配置 > 默认值；不继承其他 Lima/Colima 的 LIMA_HOME。
@@ -44,15 +123,19 @@ require_clean_lima_home() {
   for f in default.yaml override.yaml; do
     [ -e "$LIMA_HOME/_config/$f" ] && found+=("$LIMA_HOME/_config/$f")
   done
-  [ "${#found[@]}" -eq 0 ] || die "发现 Lima 全局配置：${found[*]}。它们会被合并进 VM 配置（可能加挂载、网络或开机脚本）。检查内容后移走再继续。"
+  [ "${#found[@]}" -eq 0 ] || fail_check lima.no_global_config "发现 Lima 全局配置：${found[*]}。它们会被合并进 VM 配置（可能加挂载、网络或开机脚本）。检查内容后移走再继续。"
+  pass_quiet lima.no_global_config "Lima 目录里没有全局覆盖配置（${LIMA_HOME}/_config）"
 }
 
 require_mac() {
-  [ "$(uname -s)" = Darwin ] || die "请在 Mac 上运行"
-  [ "$(uname -m)" = arm64 ] || die "当前终端运行在 Rosetta (x86_64) 下，请换原生 arm64 终端"
-  command -v limactl >/dev/null || die "未安装 Lima：brew install lima"
+  [ "$(uname -s)" = Darwin ] || fail_check host.macos_arm64 "请在 Mac 上运行"
+  [ "$(uname -m)" = arm64 ] || fail_check host.macos_arm64 "当前终端运行在 Rosetta (x86_64) 下，请换原生 arm64 终端"
+  pass_quiet host.macos_arm64 "Apple Silicon Mac，原生 arm64"
+  command -v limactl >/dev/null || fail_check lima.version "未安装 Lima：brew install lima"
   local v; v="$(limactl --version | awk '{print $NF}')"; v="${v#v}"
-  ver_ge "$v" "$LIMA_MIN" || die "Lima $v 过旧，需要 ≥ ${LIMA_MIN}（VM 校时依赖它）：brew upgrade lima"
+  ver_ge "$v" "$LIMA_MIN" || fail_check lima.version "Lima $v 过旧，需要 ≥ ${LIMA_MIN}（VM 校时依赖它）：brew upgrade lima"
+  pass_quiet lima.version "Lima ${v}（≥ ${LIMA_MIN}）"
+  value lima_version "$v"
   require_clean_lima_home
 }
 
@@ -66,6 +149,27 @@ host_ip() { curl -fsS --max-time 20 --noproxy '' --proxy "socks5h://127.0.0.1:$P
 vm_status() { limactl list --format '{{.Status}}' "$VM" 2>/dev/null || true; }
 vm() { limactl shell --workdir=/ "$VM" "$@"; }
 vm_script() { local f="$1"; shift; vm sudo bash -s -- "$@" < "$KIT/guest/$f"; }   # 把 guest/ 下的脚本经 stdin 交给 VM 内 root 执行
+# 以 cc 身份、干净环境执行 guest/ 下的脚本（项目、Git 操作只用 cc，不让 root 在 cc 可写的仓库里跑 git）
+vm_script_cc() {
+  local f="$1"; shift
+  vm sudo -u cc -H env -i HOME=/home/cc USER=cc LOGNAME=cc PATH=/home/cc/.local/bin:/usr/local/bin:/usr/bin:/bin \
+    LANG=C.UTF-8 bash -s -- "$@" < "$KIT/guest/$f"
+}
+
+require_running() {
+  local st; st="$(vm_status)"
+  value vm_status "${st:-Missing}"
+  [ "$st" = Running ] || fail_check vm.running "${1:-VM 未运行}（当前：${st:-不存在}）"
+  pass_quiet vm.running "VM 运行中"
+}
+require_baseline() {
+  local b
+  b="$(baseline)" || fail_check baseline.present "缺少基线 ${BASELINE}：先运行 setup.sh"
+  [[ "$b" =~ ^[0-9]+(\.[0-9]+){3}$ ]] || fail_check baseline.present "基线文件内容不是 IPv4：${BASELINE}"
+  pass_quiet baseline.present "出口基线 $b"
+  value baseline "$b"
+  printf '%s\n' "$b"
+}
 
 baseline() { [ -s "$BASELINE" ] && cat "$BASELINE"; }
 
@@ -90,16 +194,17 @@ listener_addrs() {
 check_listener() {
   local addrs bad
   addrs="$(listener_addrs || true)"
-  [ -n "$addrs" ] || die "确认不了 :$PORT 的监听地址（netstat / lsof 都没有看到）。扩展脚本可能没有生效；也可以用 sudo lsof -nP -iTCP:$PORT -sTCP:LISTEN 查看。无法确认时不继续。"
+  [ -n "$addrs" ] || fail_check listener.loopback_only "确认不了 :$PORT 的监听地址（netstat / lsof 都没有看到）。CCVM 自带核心没有在运行，或 Clash Verge 的扩展脚本没有生效；也可以用 sudo lsof -nP -iTCP:$PORT -sTCP:LISTEN 查看。无法确认时不继续。"
   bad="$(awk '$0 != "127.0.0.1" && $0 != "::1"' <<<"$addrs")"
-  [ -z "$bad" ] || die ":$PORT 还监听在非回环地址：$(tr '\n' ' ' <<<"$bad")。扩展脚本里必须是 listen: 127.0.0.1，并检查是否有其他程序占用了这个端口。"
-  ok "专用入口只监听在回环地址（$(tr '\n' ' ' <<<"$addrs" | sed 's/ $//')）"
+  value listener_addrs "$(tr '\n' ' ' <<<"$addrs" | sed 's/ $//')"
+  [ -z "$bad" ] || fail_check listener.loopback_only ":$PORT 还监听在非回环地址：$(tr '\n' ' ' <<<"$bad")。扩展脚本里必须是 listen: 127.0.0.1，并检查是否有其他程序占用了这个端口。"
+  pass listener.loopback_only "专用入口只监听在回环地址（$(tr '\n' ' ' <<<"$addrs" | sed 's/ $//')）"
 }
 
 # Lima 合并后的实际配置里不能有挂载和额外网卡（防止 _config 之外的途径改了实例配置）
 check_effective_lima_config() {
   local got
   got="$(limactl list --format '{{len .Config.Mounts}} {{len .Config.Networks}}' "$VM" 2>/dev/null || true)"
-  [ "$got" = "0 0" ] || die "VM 实际配置里有挂载或额外网络（mounts networks = ${got:-读不到}）。查看 $LIMA_HOME/$VM/lima.yaml。"
-  ok "VM 实际配置：无挂载、无额外网络"
+  [ "$got" = "0 0" ] || fail_check lima.effective_config "VM 实际配置里有挂载或额外网络（mounts networks = ${got:-读不到}）。查看 $LIMA_HOME/$VM/lima.yaml。"
+  pass lima.effective_config "VM 实际配置：无挂载、无额外网络"
 }

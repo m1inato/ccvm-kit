@@ -65,6 +65,8 @@ def validate(files):
         r"(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|"
         r"sk-ant-[A-Za-z0-9_-]{20,}|-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----)"
     )
+    # 项目禁止这种哈希（AGENTS.md）：任何被跟踪的文件都不能使用或提到它，AGENTS.md 本身除外
+    forbidden_hash = re.compile(r"sha[-_ ]?256|shasum\s+-a\s*256", re.I)
     for name, data in files.items():
         path = PurePosixPath(name)
         if path.is_absolute() or ".." in path.parts:
@@ -81,6 +83,8 @@ def validate(files):
             errors.append(name + ": machine-specific absolute home path")
         if credential.search(content):
             errors.append(name + ": possible credential material")
+        if name != "AGENTS.md" and (forbidden_hash.search(content) or forbidden_hash.search(name)):
+            errors.append(name + ": uses a hash algorithm this project forbids (see AGENTS.md)")
 
     version = files.get("VERSION", b"").decode("utf-8").strip()
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
@@ -94,6 +98,8 @@ def validate(files):
         errors.append("config/sing-box.json: missing or invalid JSON")
     if "README.md" not in files:
         errors.append("README.md: missing")
+    if "AGENTS.md" not in files:
+        errors.append("AGENTS.md: missing")
     return errors
 
 

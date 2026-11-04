@@ -1,0 +1,41 @@
+{
+  "name": "ccvm-desktop",
+  "productName": "CCVM",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CCVM 桌面端：菜单栏、桌面胶囊和主窗口，调用 ccvm-kit 脚本",
+  "main": "dist-electron/main.js",
+  "license": "UNLICENSED",
+  "scripts": {
+    "dev": "vite",
+    "build:kit": "node build/copy-kit.mjs",
+    "build:main": "node build/build-main.mjs",
+    "build:renderer": "vite build",
+    "build": "npm run build:kit && npm run build:main && npm run build:renderer",
+    "start": "npm run build && electron .",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "dist": "npm run rebuild && npm run build && electron-builder --mac --arm64",
+    "rebuild": "electron-builder install-app-deps"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.1.2",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "electron": "44.7.2",
+    "electron-builder": "26.17.0",
+    "esbuild": "0.28.2",
+    "react": "19.2.9",
+    "react-dom": "19.2.9",
+    "typescript": "5.9.3",
+    "vite": "8.3.4",
+    "vitest": "5.0.4",
+    "yaml": "2.9.1"
+  },
+  "dependencies": {
+    "node-pty": "1.1.0"
+  }
+}
