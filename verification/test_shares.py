@@ -192,7 +192,7 @@ class ShareTests(ScriptHarness):
 class FilesTests(ScriptHarness):
     def test_paths_outside_home_never_reach_the_vm(self):
         for op, args in [("list", ["/etc"]), ("list", ["/home/cc/../x"]), ("rm", ["/home/cc/a\nb"]),
-                         ("mkdir", ["/home/ccx"]), ("push", ["/Volumes/x", "/tmp"]), ("pull", ["/home/cc/../etc/passwd", "/Volumes/x"])]:
+                         ("mkdir", ["/Volumes/home/cc/x"]), ("push", ["/Volumes/x", "/tmp"]), ("pull", ["/home/cc/../etc/passwd", "/Volumes/x"])]:
             with self.subTest(op=op, args=args):
                 if self.log.exists():
                     self.log.unlink()

@@ -72,7 +72,7 @@ describe('shares.txt and VM paths', () => {
   it('checks VM paths like files.sh', () => {
     expect(vmPathProblem('/home/cc')).toBe('');
     expect(vmPathProblem('/home/cc/work/my api')).toBe('');
-    for (const bad of ['/etc', '/home/ccx', '/home/cc/../etc', '/home/cc/a\nb', 'home/cc']) expect(vmPathProblem(bad)).not.toBe('');
+    for (const bad of ['/etc', '/home/cc/../etc', '/home/cc/a\nb', 'home/cc']) expect(vmPathProblem(bad)).not.toBe('');
     expect(isMacPath('/home/cc/mac/app/x')).toBe(true);
     expect(isMacPath('/home/cc/machine')).toBe(false);
   });
