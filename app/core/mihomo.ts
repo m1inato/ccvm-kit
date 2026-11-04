@@ -81,6 +81,7 @@ export interface CoreConfigInput {
   node: RawNode;
   iface: string;
   socketPath: string;
+  dnsServers: string[];
   port?: number;
   /** 仅测试用：允许绑定回环网卡（lo / lo0），配合本机的假节点 */
   testLoopback?: boolean;
@@ -92,6 +93,7 @@ export function buildCoreConfig(input: CoreConfigInput): string {
   const port = input.port ?? CORE_PORT;
   if (!IFACE.test(iface) && !(input.testLoopback && /^lo\d*$/.test(iface))) throw new Error(`不是物理网卡：${iface}`);
   if (!socketPath.startsWith('/') || socketPath.length > 100) throw new Error('控制 socket 路径必须是绝对路径且不超过 100 个字符');
+  const nameservers = boundDns(input.dnsServers, input.iface);
   const cfg = {
     'allow-lan': false,
     'bind-address': '127.0.0.1',
@@ -110,8 +112,8 @@ export function buildCoreConfig(input: CoreConfigInput): string {
       enable: true,
       ipv6: false,
       'respect-rules': false,
-      nameserver: [`dhcp://${iface}`],
-      'proxy-server-nameserver': [`dhcp://${iface}`],
+      nameserver: nameservers,
+      'proxy-server-nameserver': nameservers,
     },
     proxies: [node],
     listeners: [{ name: LISTENER_NAME, type: 'mixed', listen: '127.0.0.1', port, udp: false, users: [], proxy: node.name }],
@@ -124,11 +126,13 @@ export interface ProbeConfigInput {
   nodes: RawNode[];
   iface: string;
   socketPath: string;
+  dnsServers: string[];
 }
 
 /** 测延迟用的临时配置：全部节点，但没有任何入口，只能经本机 socket 发起测试 */
 export function buildProbeConfig(input: ProbeConfigInput): string {
   if (!IFACE.test(input.iface)) throw new Error(`不是物理网卡：${input.iface}`);
+  const nameservers = boundDns(input.dnsServers, input.iface);
   const cfg = {
     'allow-lan': false,
     'bind-address': '127.0.0.1',
@@ -140,7 +144,7 @@ export function buildProbeConfig(input: ProbeConfigInput): string {
     'interface-name': input.iface,
     'external-controller-unix': input.socketPath,
     profile: { 'store-selected': false, 'store-fake-ip': false },
-    dns: { enable: true, ipv6: false, nameserver: [`dhcp://${input.iface}`], 'proxy-server-nameserver': [`dhcp://${input.iface}`] },
+    dns: { enable: true, ipv6: false, nameserver: nameservers, 'proxy-server-nameserver': nameservers },
     proxies: input.nodes,
     rules: ['MATCH,REJECT'],
   };
@@ -192,6 +196,24 @@ export function nodeFromConfig(text: string): RawNode | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** 读取完整 DHCP 租约中的 DNS 列表；不从其它字段猜测，也不使用系统解析器。 */
+export function parseDhcpDns(packet: string): string[] {
+  const list = packet.match(/^\s*domain_name_server\s*\(ip_mult\):\s*\{([^}]+)\}/m)?.[1] ?? '';
+  return [...new Set(list.split(',').map((s) => s.trim()).filter(usableDnsIp))];
+}
+
+function usableDnsIp(ip: string): boolean {
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) return false;
+  const n = ip.split('.').map(Number);
+  return n.every((v) => v <= 255) && n[0] > 0 && n[0] < 224 && n[0] !== 127
+    && !(n[0] === 169 && n[1] === 254) && !(n[0] === 198 && (n[1] === 18 || n[1] === 19));
+}
+
+function boundDns(servers: string[], iface: string): string[] {
+  if (!servers.length || servers.some((s) => !usableDnsIp(s))) throw new Error('没有可用的 DHCP DNS 地址');
+  return [...new Set(servers)].map((s) => `${s}#${iface}`);
 }
 
 /** `scutil --nwi` 的 IPv4 部分按优先级列出网卡；取第一块物理网卡（en*），跳过 utun 等虚拟网卡 */

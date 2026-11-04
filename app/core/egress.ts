@@ -12,7 +12,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import {
   buildCoreConfig, buildProbeConfig, CORE_LABEL, CORE_PORT, coreConfigProblems, launchAgentPlist, MIHOMO_MIN,
-  nodeFromConfig, parseConnections, parseLaunchctlPrint, parseMihomoVersion, parseSubscription, physicalInterface,
+  nodeFromConfig, parseDhcpDns, parseConnections, parseLaunchctlPrint, parseMihomoVersion, parseSubscription, physicalInterface,
   subscriptionUrlProblem, maskSubscription, versionAtLeast, type CoreConnection, type NodeInfo, type RawNode,
 } from './mihomo';
 
@@ -34,7 +34,7 @@ export interface CoreDeps {
   now?: () => number;
 }
 
-export type StopReason = 'node_changed' | 'node_missing' | 'no_iface' | 'user' | 'mode';
+export type StopReason = 'node_changed' | 'node_missing' | 'no_iface' | 'no_dns' | 'user' | 'mode';
 
 /** 选定的节点：只记名称、类型、服务器和端口；完整内容只在核心配置文件里（0600） */
 export type PinnedNode = NodeInfo;
@@ -43,6 +43,7 @@ interface CoreState {
   node?: PinnedNode;
   nodes?: NodeInfo[];
   iface?: string;
+  dnsServers?: string[];
   acceptedVersion?: string;
   lastUpdate?: number;
   lastUpdateError?: string;
@@ -245,7 +246,7 @@ export class CoreManager {
     if (!node) throw new Error(`订阅里没有节点「${name}」`);
     const iface = await this.currentIface();
     if (!iface) throw new Error('找不到可用的物理网卡（Wi-Fi / 有线）');
-    this.writeConfig(node, iface);
+    await this.writeConfig(node, iface);
     this.state.node = info(node);
     this.state.pending = undefined;
     this.state.stopped = undefined;
@@ -270,7 +271,12 @@ export class CoreManager {
       await this.stop('no_iface', '没有可用的物理网卡，出口核心保持停止（VM 断网）');
       return;
     }
-    if (iface !== this.state.iface) this.writeConfig(node, iface);
+    try {
+      await this.writeConfig(node, iface);
+    } catch (err) {
+      await this.stop('no_dns', String((err as Error).message));
+      throw err;
+    }
     const status = parseLaunchctlPrint((await this.deps.exec('launchctl', ['print', this.target], 5000)).code, '');
     // 刚停掉的旧进程可能还没释放端口：最多等 3 秒
     let busy = !status.loaded && (await portInUse(CORE_PORT));
@@ -317,13 +323,20 @@ export class CoreManager {
   async onNetworkChange(): Promise<'unchanged' | 'rebound' | 'stopped' | 'resumed'> {
     if (!this.state.node || this.state.pending) return 'unchanged';
     const stopped = this.state.stopped;
-    if (stopped && stopped.reason !== 'no_iface') return 'unchanged';
+    if (stopped && stopped.reason !== 'no_iface' && stopped.reason !== 'no_dns') return 'unchanged';
     const iface = await this.currentIface();
     if (!iface) {
       if (!stopped) await this.stop('no_iface', '没有可用的物理网卡，出口核心已停（VM 断网）');
       return stopped ? 'unchanged' : 'stopped';
     }
-    if (stopped?.reason === 'no_iface' || iface !== this.state.iface) {
+    let dnsServers: string[];
+    try { dnsServers = await this.currentDns(iface); }
+    catch (err) {
+      await this.stop('no_dns', String((err as Error).message));
+      return 'stopped';
+    }
+    if (stopped?.reason === 'no_iface' || stopped?.reason === 'no_dns' || iface !== this.state.iface
+      || JSON.stringify(dnsServers) !== JSON.stringify(this.state.dnsServers)) {
       // 先断网再改绑：停 → 写新配置 → 启动；跟不上就保持停止
       await this.deps.exec('launchctl', ['bootout', this.target], 10_000);
       await this.start();
@@ -343,12 +356,25 @@ export class CoreManager {
     return nwi.code === 0 ? physicalInterface(nwi.stdout) : undefined;
   }
 
-  private writeConfig(node: RawNode, iface: string): void {
-    const text = buildCoreConfig({ node, iface, socketPath: this.socketPath });
+  private async currentDns(iface: string): Promise<string[]> {
+    const packet = await this.deps.exec('/usr/sbin/ipconfig', ['getpacket', iface], 5000);
+    const servers: string[] = [];
+    for (const ip of packet.code === 0 ? parseDhcpDns(packet.stdout) : []) {
+      const route = await this.deps.exec('/sbin/route', ['-n', 'get', ip], 5000);
+      if (route.code === 0 && route.stdout.match(/^\s*interface:\s*(\S+)/m)?.[1] === iface) servers.push(ip);
+    }
+    if (!servers.length) throw new Error(`网卡 ${iface} 没有经物理网卡可达的 DHCP DNS；核心保持停止`);
+    return servers;
+  }
+
+  private async writeConfig(node: RawNode, iface: string): Promise<void> {
+    const dnsServers = await this.currentDns(iface);
+    const text = buildCoreConfig({ node, iface, dnsServers, socketPath: this.socketPath });
     const problems = coreConfigProblems(text, node.name);
     if (problems.length) throw new Error(`生成的核心配置没有通过自检：${problems.join('；')}`);
     writePrivate(this.configFile, text, 0o600);
     this.state.iface = iface;
+    this.state.dnsServers = dnsServers;
   }
 
   // ---------------------------------------------------------------- 读数据
@@ -367,12 +393,13 @@ export class CoreManager {
     if (!iface) throw new Error('找不到可用的物理网卡');
     const parsed = await this.download(url);
     this.applyList(parsed.raw);
+    const dnsServers = await this.currentDns(iface);
     // socket 路径不能太长，用系统临时目录下的短目录（0700）
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ccvm-probe-'));
     fs.chmodSync(tmp, 0o700);
     const sock = path.join(tmp, 'p.sock');
     const cfgFile = path.join(tmp, 'probe.yaml');
-    writePrivate(cfgFile, buildProbeConfig({ nodes: parsed.raw, iface, socketPath: sock }), 0o600);
+    writePrivate(cfgFile, buildProbeConfig({ nodes: parsed.raw, iface, dnsServers, socketPath: sock }), 0o600);
     const child = spawn(this.mihomoPath, ['-d', tmp, '-f', cfgFile], { stdio: 'ignore', env: { PATH: '/usr/bin:/bin', HOME: this.deps.home } });
     const result: Record<string, number | null> = {};
     try {

@@ -16,7 +16,7 @@
 | 订阅格式（M3） | 只支持 Clash YAML | App 自己解析，只把选定节点写进核心配置，节点任何字段变了都能精确发现；base64 / 链接格式提示改用 Clash Verge 模式 |
 | 核心程序（M3） | Homebrew 的 mihomo | App 不分发 mihomo；记录版本，升级后提示重做断流测试，通过后才算接受新版本 |
 | 后台服务（M3） | launchctl + LaunchAgent | 不需要原生代码和签名，配 Homebrew 版最顺；KeepAlive 意外退出自动拉起 |
-| 节点域名解析（M3） | 当前网卡的 DHCP DNS | `dhcp://<网卡>`，切换网络时跟着改绑；不受 Clash Verge 接管 DNS 影响 |
+| 节点域名解析（M3） | 当前网卡的 DHCP DNS | 读取系统完整 DHCP 租约，筛选路由走当前物理网卡的 IPv4 DNS，并用 `地址#网卡` 绑定；无可用地址时停止核心 |
 | 节点密码（M3） | 只留选定节点的 | 其他节点只存名称、类型、服务器和指纹；换节点和测延迟时重新下载订阅，只在内存里用 |
 | 测延迟（M3） | 加按钮，点了才测 | 临时起一个没有任何入口的 mihomo，测完立刻删掉临时配置 |
 | 订阅更新失败 | 只在设置里显示 | 核心继续用原来的节点，隔离不受影响，不算出错 |
@@ -39,7 +39,7 @@
 
 ## M3 自带出口核心怎么做的
 
-- **配置**（`app/core/mihomo.ts`）：一个 mixed 入口 `127.0.0.1:17897`，只收 TCP，`proxy` 固定为选定节点；规则只有 `MATCH,REJECT`；`allow-lan: false`，不开虚拟网卡，不开任何默认端口；`interface-name` 绑定物理网卡；控制接口只有 `external-controller-unix`；`dns.enable: true`（文档写明关掉时会改用系统 DNS，可能被 Clash Verge 接管）但不设 `listen`，`proxy-server-nameserver` 为 `dhcp://<网卡>`。每次写入前都用 `coreConfigProblems` 反向核对一遍，不满足就不写。
+- **配置**（`app/core/mihomo.ts`）：一个 mixed 入口 `127.0.0.1:17897`，只收 TCP，`proxy` 固定为选定节点；规则只有 `MATCH,REJECT`；`allow-lan: false`，不开虚拟网卡，不开任何默认端口；`interface-name` 绑定物理网卡；控制接口只有 `external-controller-unix`；`dns.enable: true`（文档写明关掉时会改用系统 DNS，可能被 Clash Verge 接管）但不设 `listen`，`proxy-server-nameserver` 使用筛选后的 DHCP DNS 地址并绑定物理网卡，不自行发送 DHCP 广播。每次写入前都用 `coreConfigProblems` 反向核对一遍，不满足就不写。
 - **节点固定**：每天更新订阅时，把订阅里的选定节点和核心配置里正在用的节点逐字段比较（键排序后比内容，不用任何哈希）：变了或消失，就停核心并卸载 LaunchAgent（下次登录也不会用旧节点启动），首页变红，等你点「使用新的节点信息」或换节点。下载失败不动核心。
 - **网卡**：从 `scutil --nwi` 取第一块 `en*` 网卡，跳过 utun 等虚拟网卡。网卡变了：先停、改绑、再启动；没有物理网卡就保持停止，网卡回来自动恢复。
 - **冲突**：启动前如果 17897 已经被占着（多半是 Clash Verge 里没移除的扩展脚本），拒绝启动并说明原因；运行中发现 17897 不是核心自己在听，首页变红。
@@ -48,7 +48,7 @@
 ### M3 还没验证的
 
 - 真实 mihomo 的集成测试（`app/test/mihomo-real.test.ts`）在这个容器里没跑：按你的决定没有在这里编译 mihomo。它会在 CI 的 macOS 任务里用 Homebrew 的 mihomo 跑，也可以在 Mac 上用 `MIHOMO_BIN=$(which mihomo) npm test` 跑。它核对：流量经过节点、非回环地址连不上入口、不开 TCP 控制口和 DNS 监听、节点停了不会直连、启动时不下载 geo 数据。
-- `dhcp://en0` 在 Wi-Fi / 热点 / 有线之间切换时是否可靠，`launchctl bootstrap` / `bootout` 在各 macOS 版本上的行为，都要上机验证。
+- DHCP DNS 在 Wi-Fi / 热点 / 有线之间切换时的更新，`launchctl bootstrap` / `bootout` 在各 macOS 版本上的行为，都要上机验证。
 - 测延迟用的测试地址是 `https://www.gstatic.com/generate_204`；在一些网络下可能需要换。
 
 ## M4 工作流怎么做的

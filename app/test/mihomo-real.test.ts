@@ -87,6 +87,7 @@ describe.skipIf(!BIN)('real mihomo with the generated core config', () => {
     await new Promise((r) => node.once('listening', r));
     port = await freePort();
     const cfg = buildCoreConfig({
+      dnsServers: ['192.0.2.53'],
       node: { name: '测试节点 · 本机', type: 'socks5', server: '127.0.0.1', port: (node.address() as net.AddressInfo).port },
       iface: LO,
       socketPath: sock(),

@@ -75,6 +75,31 @@ describe('CoreManager', () => {
     expect(st.iface).toBe('en0');
   });
 
+  it('uses the second DHCP DNS when the first is routed through a VPN', async () => {
+    mac.dnsServers = ['192.0.2.1', '192.0.2.53'];
+    mac.dnsRoutes['192.0.2.1'] = 'utun4';
+    const m = manager();
+    await m.setSubscription('https://sub.example.com/s');
+    await m.selectNode(NODE_A.name);
+    expect(YAML.parse(fs.readFileSync(m.configFile, 'utf8')).dns['proxy-server-nameserver']).toEqual(['192.0.2.53#en0']);
+    mac.dnsServers = ['192.0.2.54'];
+    expect(await m.onNetworkChange()).toBe('rebound');
+    expect(YAML.parse(fs.readFileSync(m.configFile, 'utf8')).dns.nameserver).toEqual(['192.0.2.54#en0']);
+    mac.dnsRoute = 'utun4';
+    expect(await m.onNetworkChange()).toBe('stopped');
+    expect(mac.loaded).toBe(false);
+    mac.dnsRoute = undefined;
+    expect(await m.onNetworkChange()).toBe('resumed');
+  });
+
+  it('refuses startup without a usable DHCP DNS', async () => {
+    mac.dnsServers = [];
+    const m = manager();
+    await m.setSubscription('https://sub.example.com/s');
+    await expect(m.selectNode(NODE_A.name)).rejects.toThrow(/DHCP DNS/);
+    expect(mac.loaded).toBe(false);
+  });
+
   it('a changed node stops the core and waits for confirmation; never switches silently', async () => {
     const m = manager();
     await m.setSubscription('https://sub.example.com/s?token=abc');

@@ -2,7 +2,7 @@ import YAML from 'yaml';
 import { describe, expect, it } from 'vitest';
 import {
   buildCoreConfig, buildProbeConfig, coreConfigProblems, launchAgentPlist, maskSubscription, nodeFromConfig,
-  parseConnections, parseLaunchctlPrint, parseMihomoVersion, parseSubscription, physicalInterface,
+  parseConnections, parseDhcpDns, parseLaunchctlPrint, parseMihomoVersion, parseSubscription, physicalInterface,
   subscriptionUrlProblem, versionAtLeast, type RawNode,
 } from '../core/mihomo';
 
@@ -48,7 +48,7 @@ describe('parseSubscription', () => {
 const node: RawNode = { name: '🇯🇵 示例节点 · 东京 01', type: 'ss', server: 'jp1.example.com', port: 8388, cipher: 'aes-128-gcm', password: 's3cret' };
 
 describe('core config', () => {
-  const text = buildCoreConfig({ node, iface: 'en0', socketPath: '/Volumes/Data/CCVM/core/mihomo.sock' });
+  const text = buildCoreConfig({ dnsServers: ['192.0.2.53'], node, iface: 'en0', socketPath: '/Volumes/Data/CCVM/core/mihomo.sock' });
   const cfg = YAML.parse(text);
   it('has exactly one loopback TCP listener pinned to the node, and rejects everything else', () => {
     expect(cfg.listeners).toEqual([{ name: 'ccvm-in', type: 'mixed', listen: '127.0.0.1', port: 17897, udp: false, users: [], proxy: node.name }]);
@@ -60,7 +60,7 @@ describe('core config', () => {
     expect(cfg['interface-name']).toBe('en0');
     expect(cfg.dns.enable).toBe(true);
     expect(cfg.dns.listen).toBeUndefined();
-    expect(cfg.dns['proxy-server-nameserver']).toEqual(['dhcp://en0']);
+    expect(cfg.dns['proxy-server-nameserver']).toEqual(['192.0.2.53#en0']);
   });
   it('controller only on a unix socket; no ports, tun, groups or downloads', () => {
     expect(cfg['external-controller']).toBeUndefined();
@@ -71,9 +71,9 @@ describe('core config', () => {
   });
   it('refuses virtual or odd interfaces', () => {
     for (const iface of ['utun4', 'lo0', 'bridge100', 'en0; rm -rf', '']) {
-      expect(() => buildCoreConfig({ node, iface, socketPath: '/tmp/s.sock' }), iface).toThrow();
+      expect(() => buildCoreConfig({ dnsServers: ['192.0.2.53'], node, iface, socketPath: '/tmp/s.sock' }), iface).toThrow();
     }
-    expect(() => buildCoreConfig({ node, iface: 'lo', socketPath: '/tmp/s.sock', port: 18000, testLoopback: true })).not.toThrow();
+    expect(() => buildCoreConfig({ dnsServers: ['192.0.2.53'], node, iface: 'lo', socketPath: '/tmp/s.sock', port: 18000, testLoopback: true })).not.toThrow();
   });
   it('the invariant checker catches weakened configs', () => {
     const bad = (mut: (c: Record<string, unknown>) => void) => {
@@ -92,12 +92,12 @@ describe('core config', () => {
   });
   it('node names with YAML-special characters round-trip', () => {
     const odd: RawNode = { ...node, name: 'a: b # "c" \'d\' [e] {f}' };
-    const t = buildCoreConfig({ node: odd, iface: 'en1', socketPath: '/tmp/s.sock' });
+    const t = buildCoreConfig({ dnsServers: ['192.0.2.53'], node: odd, iface: 'en1', socketPath: '/tmp/s.sock' });
     expect(coreConfigProblems(t, odd.name)).toEqual([]);
     expect(nodeFromConfig(t)?.name).toBe(odd.name);
   });
   it('probe config has all nodes and no inbound at all', () => {
-    const p = YAML.parse(buildProbeConfig({ nodes: [node, { ...node, name: 'b' }], iface: 'en0', socketPath: '/tmp/p.sock' }));
+    const p = YAML.parse(buildProbeConfig({ dnsServers: ['192.0.2.53'], nodes: [node, { ...node, name: 'b' }], iface: 'en0', socketPath: '/tmp/p.sock' }));
     expect(p.proxies).toHaveLength(2);
     expect(p.listeners).toBeUndefined();
     expect(p['mixed-port']).toBeUndefined();
@@ -106,6 +106,12 @@ describe('core config', () => {
 });
 
 describe('system output parsers', () => {
+  it('reads every DHCP DNS address and rejects invalid or fake addresses', () => {
+    expect(parseDhcpDns('router (ip_mult): {192.0.2.1}\ndomain_name_server (ip_mult): {192.0.2.53, 198.18.0.1, 999.1.1.1, 192.0.2.54, 192.0.2.53}')).toEqual(['192.0.2.53', '192.0.2.54']);
+    expect(parseDhcpDns('no lease')).toEqual([]);
+    expect(() => buildCoreConfig({ node, iface: 'en0', dnsServers: [], socketPath: '/tmp/s.sock' })).toThrow(/DNS/);
+  });
+
   it('picks the first physical interface even when a VPN/TUN is primary', () => {
     const nwi = `Network information
 
