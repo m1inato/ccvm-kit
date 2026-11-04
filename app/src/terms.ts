@@ -1,6 +1,6 @@
 // 内嵌终端的界面端：xterm 实例按会话名登记。切换页面或标签不会断开，只有关标签才断开（VM 里的 tmux 会话继续）。
 import { FitAddon } from '@xterm/addon-fit';
-import { Terminal } from '@xterm/xterm';
+import { Terminal, type ITheme } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { getBridge, type TermBridge } from './api';
 
@@ -51,6 +51,26 @@ function wire(b: TermBridge): void {
   });
 }
 
+const DARK: ITheme = { background: '#0a0d12', foreground: '#e6edf3', cursor: '#7aa5e6', selectionBackground: '#2a3a55' };
+// 浅色背景上 xterm 默认的 ANSI 颜色（黄、亮白等）看不清，换一套深一些的
+const LIGHT: ITheme = {
+  background: '#ffffff', foreground: '#1f2328', cursor: '#3b6fc0', cursorAccent: '#ffffff', selectionBackground: '#c8daf5',
+  black: '#24292f', red: '#cf222e', green: '#116329', yellow: '#7d4e00', blue: '#0969da', magenta: '#8250df', cyan: '#1b7c83', white: '#6e7781',
+  brightBlack: '#57606a', brightRed: '#a40e26', brightGreen: '#1a7f37', brightYellow: '#633c01', brightBlue: '#218bff', brightMagenta: '#a475f9', brightCyan: '#3192aa', brightWhite: '#8c959f',
+};
+
+/** 界面当前是不是浅色：设置里选了浅色，或者跟随系统而系统是浅色 */
+export function isLightTheme(): boolean {
+  const t = document.documentElement.dataset.theme;
+  return t === 'light' || (t !== 'dark' && window.matchMedia('(prefers-color-scheme: light)').matches);
+}
+
+/** 主题变了：所有终端换配色 */
+export function applyTermTheme(): void {
+  const theme = isLightTheme() ? LIGHT : DARK;
+  for (const e of entries.values()) e.term.options.theme = theme;
+}
+
 function create(project: string, session: string): TermEntry {
   const el = document.createElement('div');
   el.className = 'xterm-host';
@@ -60,7 +80,7 @@ function create(project: string, session: string): TermEntry {
     lineHeight: 1.2,
     cursorBlink: true,
     scrollback: 5000,
-    theme: { background: '#0a0d12', foreground: '#e6edf3', cursor: '#7aa5e6', selectionBackground: '#2a3a55' },
+    theme: isLightTheme() ? LIGHT : DARK,
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
@@ -96,6 +116,16 @@ export async function openTerm(project: string, mode: 'new' | 'attach', session:
   entry.term.onResize(({ cols, rows }) => entry.ptyId && entry.state === 'open' && bridge.term!.resize(entry.ptyId, cols, rows));
   changed();
   return entry;
+}
+
+/** VM 里的会话改名后，把登记的名字也换掉：接入着的终端继续用（tmux 客户端跟的是会话本身，不是名字） */
+export function renameTerm(from: string, to: string): void {
+  const entry = entries.get(from);
+  if (!entry || entries.has(to)) return;
+  entries.delete(from);
+  entry.session = to;
+  entries.set(to, entry);
+  changed();
 }
 
 /** 断开这个标签：本机这一端结束，VM 里的会话继续 */

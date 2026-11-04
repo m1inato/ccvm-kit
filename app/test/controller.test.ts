@@ -137,6 +137,20 @@ describe('Controller end to end', () => {
     expect(c.settings.latencyTestUrl).toBe('http://cp.cloudflare.com/generate_204');
   });
 
+  it('settings: theme is system / dark / light, anything else falls back to system', () => {
+    c = make();
+    expect(c.settings.theme).toBe('system');
+    expect(c.updateSettings({ theme: 'light' }).theme).toBe('light');
+    expect(c.updateSettings({ theme: 'sepia' as never }).theme).toBe('system');
+  });
+
+  it('rename session: bad names never reach the script', async () => {
+    c = make();
+    await expect(c.renameSession('my-api-1', 'x;y')).rejects.toThrow(/会话名/);
+    await expect(c.renameSession('a b', 'ok')).rejects.toThrow(/会话名/);
+    expect(f.calls()).not.toContain('rename-session');
+  });
+
   it('settings: terminal app is one of Terminal / iTerm / Ghostty', () => {
     c = make();
     expect(c.updateSettings({ terminalApp: 'Ghostty' }).terminalApp).toBe('Ghostty');

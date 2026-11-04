@@ -3,6 +3,7 @@
 # 用法：workspace.sh list|claude [--json]
 #       workspace.sh clone <git 地址> [--json]
 #       workspace.sh kill-session <会话名> [--json]
+#       workspace.sh rename-session <旧名> <新名> [--json]
 #       workspace.sh events <偏移|end> [--json]     hook 记下的 Claude 事件（「做完了」字幕用）
 # 克隆只接受 https://主机/路径、ssh://git@主机/路径、git@主机:路径；不接受地址里带账号或令牌。
 # 私有仓库的凭据由你自己在 VM 的 cc 用户里配置（gh auth / SSH 密钥），App 不经手。
@@ -90,6 +91,15 @@ case "$1" in
     [[ "$2" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || fail_check session.kill "无效的会话名：$2"
     rc=0; vm_script_cc workspace.sh kill-session "$2" | relay_guest || rc=$?
     [ "$rc" -eq 0 ] || die "没能结束会话 $2"
+    ;;
+  rename-session)
+    [ $# -eq 3 ] || die "用法：workspace.sh rename-session <旧名> <新名>"
+    for s in "$2" "$3"; do
+      [[ "$s" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || fail_check session.rename "无效的会话名：${s}（只能用 A-Z a-z 0-9 _ -，最长 64）"
+    done
+    [ "$2" != "$3" ] || fail_check session.rename "新名和旧名一样"
+    rc=0; vm_script_cc workspace.sh rename-session "$2" "$3" | relay_guest || rc=$?
+    [ "$rc" -eq 0 ] || die "没能把 $2 改名为 $3"
     ;;
   *) die "未知操作：$1" ;;
 esac

@@ -46,7 +46,7 @@ bash scripts/check.sh --quick --json
 | `preflight.sh [--json]` | 部署前检查，不需要 VM，逐项报告 |
 | `upgrade.sh [--json]` | 给已部署的 VM 补装软件包（`setup.sh` 看到已安装就跳过，早先部署的 VM 可能缺 `git`、`tmux`）。只装包，不碰防火墙、TUN、sing-box 和 DNS；步骤为 `upgrade.packages` → `upgrade.verify`，后者跑完整验收，事件并入同一个流 |
 | `vm.sh start\|stop\|status [--json]` | 启停 VM；每次都先检查 Lima 全局配置，启动后核对实际配置 |
-| `workspace.sh list\|claude\|clone URL\|kill-session 会话名 [--json]` | VM 里 `~/work` 的项目与 tmux 会话、Claude Code 是否已安装、以 cc 身份克隆、结束会话 |
+| `workspace.sh list\|claude\|clone URL\|kill-session 会话名\|rename-session 旧名 新名 [--json]` | VM 里 `~/work` 的项目与 tmux 会话、Claude Code 是否已安装、以 cc 身份克隆、结束会话、给会话改名 |
 | `hooks.sh enable\|disable\|status [--json]` | 「Claude 做完了」字幕用的 hook：装在 VM 里 root 所有的 managed-settings 目录里，cc 改不了 |
 | `enter.sh [--project 名称] [--session 会话名\|auto] \| --attach 会话名` | 交互入口（没有 JSON 模式）。`--session` 检查后新建或接入 tmux 会话，`auto` 按 `<项目>-<第一个空闲序号>` 取名；`--attach` 只接入已有会话，不做检查 |
 | `share.sh status\|apply [--json]` | 共享文件夹（读写）。`status` 列出 `$STATE/shares.txt` 里的共享并逐个检查路径，不碰 VM；`apply` 检查路径 → 停 VM → `limactl edit --set '.mounts = [...]'` → 启动并核对实际配置 → 在 VM 里设置 bindfs 映射。步骤为 `share.check` → `share.stop` → `share.edit` → `share.start` → `share.guest` |
@@ -126,6 +126,7 @@ id 是 App 与脚本之间的接口。可以改说明文字，改 id 要同时�
 | `project.clone` | 克隆完成 |
 | `claude.installed` | cc 的 `~/.local/bin/claude` 存在且 `--version` 能运行 |
 | `session.kill` | 结束了 cc 的一个 tmux 会话（会话名只允许 `[A-Za-z0-9_-]`，最长 64） |
+| `session.rename` | 给 cc 的一个 tmux 会话改了名（新旧名字都只允许 `[A-Za-z0-9_-]`，最长 64；新名已被占用时失败）。接入着的终端不受影响 |
 
 ### 共享文件夹（`scripts/share.sh`、`guest/shares.sh`，可选）
 

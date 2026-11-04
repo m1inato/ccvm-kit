@@ -5,7 +5,7 @@ import { duration, relativeTime } from '../../core/status';
 import { act, errorText, useApp } from '../api';
 import { Dot } from '../components/common';
 import { RightPanel } from '../components/RightPanel';
-import { detachTerm, getTerm, openTerm, subscribe, termsOf, type TermEntry } from '../terms';
+import { detachTerm, getTerm, openTerm, renameTerm, subscribe, termsOf, type TermEntry } from '../terms';
 
 export function ProjectPage({ name }: { name: string }) {
   const { snap, now, go, run } = useApp();
@@ -39,6 +39,26 @@ export function ProjectPage({ name }: { name: string }) {
     } finally {
       setBusy(false);
     }
+  };
+  const [renaming, setRenaming] = useState<{ from: string; to: string } | null>(null);
+  // 回车之后输入框失焦还会再触发一次：同一次编辑只提交一次
+  const committing = useRef<string | null>(null);
+  const commitRename = async () => {
+    if (!renaming || committing.current === renaming.from) return;
+    committing.current = renaming.from;
+    const { from, to } = renaming;
+    const name2 = to.trim();
+    setRenaming(null);
+    if (!name2 || name2 === from) {
+      committing.current = null;
+      return;
+    }
+    const ok = await run(() => act('renameSession', from, name2));
+    if (ok) {
+      renameTerm(from, name2);
+      if (active === from) setActive(name2);
+    }
+    committing.current = null;
   };
   const select = (session: string) => {
     const t = getTerm(session);
@@ -77,7 +97,34 @@ export function ProjectPage({ name }: { name: string }) {
               <div key={s.name} className={`session ${current === s.name ? 'active' : ''}`} style={{ cursor: 'pointer' }} onClick={() => select(s.name)}>
                 <div className="row small">
                   <Dot level={here ? 'ok' : s.attached ? 'busy' : 'idle'} />
-                  <span className="mono grow ellipsis">{s.name}</span>
+                  {renaming?.from === s.name ? (
+                    <input
+                      className="input mono grow"
+                      autoFocus
+                      value={renaming.to}
+                      maxLength={64}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => setRenaming({ from: s.name, to: e.target.value.replace(/[^A-Za-z0-9_-]/g, '') })}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') void commitRename();
+                        if (e.key === 'Escape') setRenaming(null);
+                      }}
+                      onBlur={() => void commitRename()}
+                      style={{ height: 22, padding: '0 6px' }}
+                    />
+                  ) : (
+                    <span
+                      className="mono grow ellipsis"
+                      title="双击改名"
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        committing.current = null;
+                        setRenaming({ from: s.name, to: s.name });
+                      }}
+                    >
+                      {s.name}
+                    </span>
+                  )}
                 </div>
                 <div className="tiny muted">
                   {relativeTime(s.created * 1000, now)}开始 · {here ? '在这里接入' : s.attached ? '在别处接入' : '未接入'}

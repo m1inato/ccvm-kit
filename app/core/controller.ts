@@ -13,7 +13,7 @@ import { MATRIX } from './report';
 import { runCommand, runScript } from './runner';
 import { shareLines, sharePathProblem, sharesFileContent } from './shares';
 import { vmPathProblem } from './vmpath';
-import { TERMINAL_APPS } from './types';
+import { TERMINAL_APPS, THEMES } from './types';
 import { AlertTracker, deriveLevel, issuesFromCheck, issuesFromCore, issuesFromLeak, newestCheck, Throttle } from './status';
 import type {
   Caption,
@@ -89,6 +89,7 @@ export function defaultSettings(home: string, dataDir: string): Settings {
     sharedFolders: [],
     sharesEnabled: false,
     latencyTestUrl: DEFAULT_LATENCY_URL,
+    theme: 'system',
   };
 }
 
@@ -138,6 +139,7 @@ export class Controller extends EventEmitter {
     this.settings.sharedFolders = Array.isArray(folders) ? folders.filter((f): f is string => typeof f === 'string') : [];
     this.settings.sharesEnabled = this.settings.sharesEnabled === true;
     if (latencyUrlProblem(this.settings.latencyTestUrl)) this.settings.latencyTestUrl = DEFAULT_LATENCY_URL;
+    if (!THEMES.includes(this.settings.theme)) this.settings.theme = 'system';
     this.state = readJson<Persisted>(this.file('app-state.json')) ?? {};
     this.jobs = new JobStore(path.join(host.dataDir, 'jobs'), host.kitDir, this.now);
     this.vm = { name: this.settings.vmName, status: 'Unknown' };
@@ -693,6 +695,16 @@ export class Controller extends EventEmitter {
     return true;
   }
 
+  async renameSession(from: string, to: string): Promise<boolean> {
+    const re = /^[A-Za-z0-9_-]{1,64}$/;
+    if (!re.test(from) || !re.test(to)) throw new Error('会话名只能用 A-Z a-z 0-9 _ -，最长 64');
+    if (from === to) return true;
+    const result = await this.run('workspace.sh', ['rename-session', from, to]);
+    await this.refreshProjects();
+    if (!result.ok) throw new Error(result.reason ?? '没能改名');
+    return true;
+  }
+
   /** 新会话的名字：<项目>-<序号>，tmux 会话名只用 [A-Za-z0-9_-] */
   nextSessionName(project: string): string {
     const base = project.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 56);
@@ -750,7 +762,7 @@ export class Controller extends EventEmitter {
     const next: Settings = { ...this.settings };
     const allowed: (keyof Settings)[] = [
       'vmName', 'limaHome', 'stateDir', 'checkIntervalMin', 'showCapsule', 'terminalApp',
-      'launchAtLogin', 'nodeName', 'claudeLoginConfirmed', 'welcomeDone', 'latencyTestUrl',
+      'launchAtLogin', 'nodeName', 'claudeLoginConfirmed', 'welcomeDone', 'latencyTestUrl', 'theme',
     ];
     // hooksEnabled 只能经 setHooks 改（要在 VM 里装 / 删 hook）
     for (const key of allowed) {
@@ -759,6 +771,7 @@ export class Controller extends EventEmitter {
     const minutes = Number(next.checkIntervalMin);
     next.checkIntervalMin = Math.min(120, Math.max(2, Math.round(Number.isFinite(minutes) ? minutes : 10)));
     if (!TERMINAL_APPS.includes(next.terminalApp)) next.terminalApp = 'Terminal';
+    if (!THEMES.includes(next.theme)) next.theme = 'system';
     // 出网方式只能经 setEgressMode 切换（要启停核心）
     next.nodeName = String(next.nodeName ?? '').slice(0, 200);
     for (const key of ['showCapsule', 'launchAtLogin', 'claudeLoginConfirmed', 'welcomeDone'] as const) next[key] = !!next[key];

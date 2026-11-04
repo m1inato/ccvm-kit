@@ -342,6 +342,22 @@ class EventTests(ScriptHarness):
         self.assertIs(self.checks(self.events(result))["session.kill"], False)
         self.assertNotIn("shell", self.log.read_text() if self.log.exists() else "")
 
+    def test_rename_session_validates_names_before_reaching_the_vm(self):
+        for args in [["a b", "x"], ["my-api-1", "x;rm -rf ~"], ["my-api-1", "my-api-1"], ["my-api-1", "a" * 65]]:
+            with self.subTest(args=args):
+                if self.log.exists():
+                    self.log.unlink()
+                events = self.events(self.run_script("workspace.sh", "rename-session", *args, "--json"))
+                self.assertIs(self.checks(events)["session.rename"], False)
+                self.assertNotIn("shell", self.log.read_text() if self.log.exists() else "")
+
+    def test_rename_session_relays_the_guest_verdict(self):
+        out = self.write("rn", "PASS session.rename 已把 my-api-1 改名为 api-review\n")
+        result = self.run_script("workspace.sh", "rename-session", "my-api-1", "api-review", "--json", STUB_WORKSPACE_OUT=str(out))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIs(self.checks(self.events(result))["session.rename"], True)
+        self.assertIn("rename-session my-api-1 api-review", self.log.read_text())
+
     def test_enter_attach_skips_checks_and_only_attaches(self):
         self.selfcheck.write_text("FAIL vm.tun_up TUN 停了\nEGRESS \n")
         # 桩 limactl 把 shell 的退出码一律当成 selfcheck 的（这里是 1）；要核对的是调用了什么

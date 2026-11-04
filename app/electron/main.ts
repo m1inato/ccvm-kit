@@ -6,6 +6,7 @@ import {
   dialog,
   ipcMain,
   Menu,
+  nativeTheme,
   Notification,
   powerMonitor,
   safeStorage,
@@ -77,6 +78,17 @@ function isOwnUrl(url: string): boolean {
   }
 }
 
+// ---------------------------------------------------------------- 主题
+// themeSource 决定界面里的 prefers-color-scheme，所以「深色 / 浅色」对胶囊和主窗口都生效；窗口底色跟着变，打开时不闪
+function windowBackground(): string {
+  return nativeTheme.shouldUseDarkColors ? '#0d1117' : '#f6f8fa';
+}
+
+function applyTheme(theme: Settings['theme']): void {
+  if (nativeTheme.themeSource !== theme) nativeTheme.themeSource = theme;
+  if (mainWin && !mainWin.isDestroyed()) mainWin.setBackgroundColor(windowBackground());
+}
+
 function openMain(route?: string): void {
   if (!mainWin) {
     mainWin = new BrowserWindow({
@@ -86,7 +98,7 @@ function openMain(route?: string): void {
       minHeight: 640,
       title: 'CCVM',
       titleBarStyle: 'hiddenInset',
-      backgroundColor: '#0d1117',
+      backgroundColor: windowBackground(),
       show: false,
       webPreferences,
     });
@@ -446,6 +458,7 @@ async function dispatch(name: string, args: unknown[]): Promise<unknown> {
       if (!patch || typeof patch !== 'object') throw new Error('设置格式不对');
       const next = controller.updateSettings(patch as Partial<Settings>);
       app.setLoginItemSettings({ openAtLogin: next.launchAtLogin });
+      applyTheme(next.theme);
       return next;
     }
     case 'chooseStateDir': {
@@ -529,6 +542,8 @@ async function dispatch(name: string, args: unknown[]): Promise<unknown> {
       if (!(await confirm(`结束会话「${name}」？`, '会话里正在运行的程序（包括 Claude）会被结束，没保存的东西会丢。只是想关掉标签的话，直接关标签：会话会继续在 VM 里运行。', '结束会话'))) return false;
       return controller.killSession(name);
     }
+    case 'renameSession':
+      return controller.renameSession(str(args[0], 'from'), str(args[1], 'to'));
     case 'setHooks': {
       const on = args[0] === true;
       if (on && !(await confirm('开启「Claude 做完了」提醒？', '会在 VM 里写两个 root 所有的文件：/usr/local/lib/ccvm/claude-hook 和 /etc/claude-code/managed-settings.d/50-ccvm.json。hook 只记录事件类型、时间、工作目录和截断的通知文字，不记录对话内容，永远不影响 Claude 的行为。新开的 Claude 会话生效。', '开启', 'question'))) return controller.settings;
@@ -784,6 +799,8 @@ void app.whenReady().then(async () => {
     }
   });
 
+  applyTheme(controller.settings.theme);
+  nativeTheme.on('updated', () => applyTheme(controller.settings.theme));
   powerMonitor.on('resume', () => controller.trigger('wake'));
   watchNetwork();
   await controller.init();

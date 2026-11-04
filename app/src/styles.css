@@ -1,4 +1,4 @@
-/* CCVM 桌面端：默认深色主题，钢蓝是唯一主色；卡片用细边框和圆角。四种状态各有一个颜色。 */
+/* CCVM 桌面端：深色 / 浅色两套变量（默认跟随系统），钢蓝是唯一主色；卡片用细边框和圆角。四种状态各有一个颜色。 */
 :root {
   --bg: #0d1117;
   --bg-2: #10151c;
@@ -27,7 +27,87 @@
   --radius-sm: 7px;
   --font: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Helvetica Neue', 'Microsoft YaHei', sans-serif;
   --mono: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+  --accent-border: rgba(91, 139, 212, 0.5);
+  --ok-border: rgba(63, 185, 80, 0.4);
+  --warn-border: rgba(210, 153, 34, 0.4);
+  --term-bg: #0a0d12;
+  --float-bg: rgba(22, 27, 34, 0.93);
+  --float-border: rgba(255, 255, 255, 0.09);
+  --shadow: rgba(0, 0, 0, 0.45);
+  --on-status: #0d1117;
   color-scheme: dark;
+}
+
+/* 浅色：设置里选「浅色」（data-theme），或者「跟随系统」而系统是浅色。两处是同一套变量 */
+:root[data-theme="light"] {
+  --bg: #f6f8fa;
+  --bg-2: #eef1f4;
+  --panel: #ffffff;
+  --panel-2: #f3f5f8;
+  --panel-3: #e8ecf1;
+  --border: #d0d7de;
+  --border-strong: #afb8c1;
+  --text: #1f2328;
+  --text-2: #3d444d;
+  --muted: #59636e;
+  --faint: #6e7781;
+  --accent: #3b6fc0;
+  --accent-strong: #2c5aa0;
+  --accent-soft: rgba(59, 111, 192, 0.12);
+  --accent-border: rgba(59, 111, 192, 0.45);
+  --ok: #1a7f37;
+  --ok-soft: rgba(26, 127, 55, 0.1);
+  --ok-border: rgba(26, 127, 55, 0.4);
+  --busy: #3b6fc0;
+  --idle: #6e7781;
+  --err: #cf222e;
+  --err-soft: rgba(207, 34, 46, 0.08);
+  --err-border: rgba(207, 34, 46, 0.45);
+  --warn: #9a6700;
+  --warn-soft: rgba(154, 103, 0, 0.1);
+  --warn-border: rgba(154, 103, 0, 0.4);
+  --term-bg: #ffffff;
+  --float-bg: rgba(255, 255, 255, 0.94);
+  --float-border: rgba(31, 35, 40, 0.12);
+  --shadow: rgba(31, 35, 40, 0.18);
+  --on-status: #ffffff;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f6f8fa;
+    --bg-2: #eef1f4;
+    --panel: #ffffff;
+    --panel-2: #f3f5f8;
+    --panel-3: #e8ecf1;
+    --border: #d0d7de;
+    --border-strong: #afb8c1;
+    --text: #1f2328;
+    --text-2: #3d444d;
+    --muted: #59636e;
+    --faint: #6e7781;
+    --accent: #3b6fc0;
+    --accent-strong: #2c5aa0;
+    --accent-soft: rgba(59, 111, 192, 0.12);
+    --accent-border: rgba(59, 111, 192, 0.45);
+    --ok: #1a7f37;
+    --ok-soft: rgba(26, 127, 55, 0.1);
+    --ok-border: rgba(26, 127, 55, 0.4);
+    --busy: #3b6fc0;
+    --idle: #6e7781;
+    --err: #cf222e;
+    --err-soft: rgba(207, 34, 46, 0.08);
+    --err-border: rgba(207, 34, 46, 0.45);
+    --warn: #9a6700;
+    --warn-soft: rgba(154, 103, 0, 0.1);
+    --warn-border: rgba(154, 103, 0, 0.4);
+    --term-bg: #ffffff;
+    --float-bg: rgba(255, 255, 255, 0.94);
+    --float-border: rgba(31, 35, 40, 0.12);
+    --shadow: rgba(31, 35, 40, 0.18);
+    --on-status: #ffffff;
+    color-scheme: light;
+  }
 }
 
 * { box-sizing: border-box; }
@@ -100,8 +180,8 @@ p { margin: 0; }
 }
 .chip.mono { font-family: var(--mono); font-size: 11px; }
 .chip.err { border-color: var(--err-border); color: var(--err); background: var(--err-soft); }
-.chip.ok { border-color: rgba(63, 185, 80, 0.4); color: var(--ok); background: var(--ok-soft); }
-.chip.accent { border-color: rgba(91, 139, 212, 0.5); color: var(--accent-strong); background: var(--accent-soft); }
+.chip.ok { border-color: var(--ok-border); color: var(--ok); background: var(--ok-soft); }
+.chip.accent { border-color: var(--accent-border); color: var(--accent-strong); background: var(--accent-soft); }
 
 /* ---------------------------------------------------------------- 输入 */
 .input {
@@ -131,7 +211,7 @@ select.input { padding-right: 6px; }
 }
 .note { font-size: 12px; color: var(--muted); }
 .callout { border-radius: var(--radius-sm); padding: 10px 12px; font-size: 12px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text-2); }
-.callout.warn { border-color: rgba(210, 153, 34, 0.4); background: var(--warn-soft); }
+.callout.warn { border-color: var(--warn-border); background: var(--warn-soft); }
 .callout.err { border-color: var(--err-border); background: var(--err-soft); }
 
 /* ---------------------------------------------------------------- 框架 */
@@ -198,7 +278,7 @@ select.input { padding-right: 6px; }
 .session { padding: 9px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--panel); }
 .session.active { border-color: var(--accent); }
 .center { flex: 1; min-width: 0; overflow: auto; padding: 22px 24px; display: flex; flex-direction: column; gap: 14px; }
-.terminal-ph { background: #0a0d12; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; font-family: var(--mono); font-size: 12px; color: var(--text-2); }
+.terminal-ph { background: var(--term-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; font-family: var(--mono); font-size: 12px; color: var(--text-2); }
 .terminal-ph .prompt { color: var(--ok); }
 .panel { width: 340px; flex: none; border-left: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
 .panel-tabs { display: flex; gap: 4px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
@@ -235,7 +315,7 @@ select.input { padding-right: 6px; }
 .steps { display: flex; flex-direction: column; gap: 12px; }
 .step { display: flex; gap: 12px; align-items: flex-start; }
 .step-num { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--border-strong); display: grid; place-items: center; font-size: 11.5px; color: var(--muted); flex: none; margin-top: 4px; }
-.step-num.done { background: var(--ok); border-color: var(--ok); color: #0d1117; }
+.step-num.done { background: var(--ok); border-color: var(--ok); color: var(--on-status); }
 .step-num.current { border-color: var(--accent); color: var(--accent-strong); }
 .welcome-foot { display: flex; align-items: center; gap: 8px; padding-top: 6px; border-top: 1px solid var(--border); }
 
@@ -251,18 +331,18 @@ select.input { padding-right: 6px; }
 /* ---------------------------------------------------------------- 任务与提示 */
 .toast {
   position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); max-width: 560px; padding: 10px 14px;
-  border-radius: var(--radius); background: var(--panel-3); border: 1px solid var(--border-strong); box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+  border-radius: var(--radius); background: var(--panel-3); border: 1px solid var(--border-strong); box-shadow: 0 8px 30px var(--shadow);
   display: flex; gap: 10px; align-items: center; z-index: 50;
 }
 .toast.error { border-color: var(--err-border); }
 .job { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; }
-.log { max-height: 260px; overflow: auto; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; background: #0a0d12; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; color: var(--text-2); }
+.log { max-height: 260px; overflow: auto; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; background: var(--term-bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; color: var(--text-2); }
 
 /* ---------------------------------------------------------------- 桌面胶囊 */
 .capsule-wrap { padding: 6px 8px; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; user-select: none; width: max-content; max-width: 720px; }
 .capsule {
   display: inline-flex; align-items: center; gap: 9px; height: 32px; padding: 0 6px 0 13px; border-radius: 16px;
-  background: rgba(22, 27, 34, 0.92); border: 1px solid rgba(255, 255, 255, 0.09); box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
+  background: var(--float-bg); border: 1px solid var(--float-border); box-shadow: 0 6px 22px var(--shadow);
   backdrop-filter: blur(18px); font-size: 12px; color: var(--text); -webkit-app-region: drag; max-width: 100%; white-space: nowrap;
 }
 .capsule .ip { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
@@ -270,17 +350,17 @@ select.input { padding-right: 6px; }
 .capsule button { -webkit-app-region: no-drag; }
 .capsule.error { border-color: var(--err-border); }
 .caption {
-  max-width: 440px; padding: 10px 12px; border-radius: 12px; background: rgba(22, 27, 34, 0.95); border: 1px solid rgba(255, 255, 255, 0.09);
-  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.45); font-size: 12.5px; display: flex; flex-direction: column; gap: 8px; animation: rise 0.25s ease-out;
+  max-width: 440px; padding: 10px 12px; border-radius: 12px; background: var(--float-bg); border: 1px solid var(--float-border);
+  box-shadow: 0 8px 26px var(--shadow); font-size: 12.5px; display: flex; flex-direction: column; gap: 8px; animation: rise 0.25s ease-out;
 }
 .caption.error { border-color: var(--err-border); }
 @keyframes rise { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
 
 /* ---------------------------------------------------------------- 内嵌终端 */
-.term-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; background: #0a0d12; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.term-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--term-bg); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .term-tabs { display: flex; align-items: center; gap: 2px; padding: 6px 6px 0; border-bottom: 1px solid var(--border); background: var(--bg-2); overflow-x: auto; }
 .term-tab { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px 0 10px; border: 1px solid transparent; border-bottom: 0; border-radius: 7px 7px 0 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; white-space: nowrap; }
-.term-tab.active { background: #0a0d12; border-color: var(--border); color: var(--text); }
+.term-tab.active { background: var(--term-bg); border-color: var(--border); color: var(--text); }
 .term-tab .x { opacity: 0.5; padding: 0 3px; border-radius: 4px; }
 .term-tab .x:hover { opacity: 1; background: var(--panel-3); }
 .term-area { flex: 1; min-height: 0; position: relative; padding: 6px 4px 4px 8px; }
@@ -291,7 +371,7 @@ select.input { padding-right: 6px; }
 /* ---------------------------------------------------------------- 共享文件夹与文件 */
 .share-badge {
   display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 12px; font-size: 11.5px; cursor: pointer;
-  border: 1px solid rgba(210, 153, 34, 0.45); background: var(--warn-soft); color: var(--warn); -webkit-app-region: no-drag;
+  border: 1px solid var(--warn-border); background: var(--warn-soft); color: var(--warn); -webkit-app-region: no-drag;
 }
 .crumbs { display: flex; flex-wrap: wrap; gap: 2px; font-family: var(--mono); font-size: 12px; margin-top: 4px; }
 .crumbs span { display: inline-flex; gap: 2px; }

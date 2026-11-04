@@ -187,6 +187,8 @@ export interface Issue {
 
 export type EgressMode = 'clash-verge' | 'builtin';
 export type TerminalApp = 'Terminal' | 'iTerm' | 'Ghostty';
+export type Theme = 'system' | 'dark' | 'light';
+export const THEMES: Theme[] = ['system', 'dark', 'light'];
 export const TERMINAL_APPS: TerminalApp[] = ['Terminal', 'iTerm', 'Ghostty'];
 
 /** 命令行入口 ~/.local/bin/ccvm 的状态 */
@@ -223,6 +225,8 @@ export interface Settings {
   sharesEnabled: boolean;
   /** 测延迟访问的地址。想和 Clash Verge 的数字对得上，就填它设置里的同一个测试地址 */
   latencyTestUrl: string;
+  /** 外观：跟随系统（默认）/ 深色 / 浅色 */
+  theme: Theme;
 }
 
 export interface VmPackages {
@@ -332,6 +336,7 @@ export interface Actions {
   latencyTest(): Promise<LatencyResult>;
   refreshCore(): Promise<void>;
   killSession(name: string): Promise<boolean>;
+  renameSession(from: string, to: string): Promise<boolean>;
   setHooks(enabled: boolean): Promise<Settings>;
   cliStatus(): Promise<CliStatus>;
   /** 补装 VM 软件包：主进程先弹系统对话框确认，取消时返回 null；确认后是后台任务 */

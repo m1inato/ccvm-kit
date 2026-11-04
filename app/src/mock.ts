@@ -1,5 +1,6 @@
 // 浏览器预览用的演示数据（不在 Electron 里加载）。IP、项目、节点名都是示例。
-// 用 ?demo=ok（自带核心）| cv（Clash Verge）| egress | node | busy | welcome | setup | stopped | shares（共享文件夹）| upgrade（需要补装软件包）切换场景。
+// 用 ?demo=ok（自带核心）| cv（Clash Verge）| egress | node | busy | welcome | setup | stopped | shares（共享文件夹）| upgrade（需要补装软件包）切换场景；
+// 加 &theme=light 或 &theme=dark 指定外观。
 import { renderClashScript, gitUrlProblem, projectNameFromUrl } from '../core/parsers';
 import { reportMarkdown } from '../core/report';
 import type { CheckEvent, CheckRecord, CoreConnection, CoreStatus, FileItem, JobSummary, Snapshot } from '../core/types';
@@ -140,7 +141,7 @@ function initial(scenario: string): Snapshot {
       vmName: 'ccvm', limaHome: '~/.lima-ccvm', stateDir: '~/Library/Application Support/CCVM/state', checkIntervalMin: 10,
       showCapsule: true, terminalApp: 'Terminal', launchAtLogin: true, egressMode: 'builtin', nodeName: '示例节点 · 东京 01',
       claudeLoginConfirmed: true, welcomeDone: true, hooksEnabled: true, sharedFolders: [], sharesEnabled: false,
-      latencyTestUrl: 'https://www.gstatic.com/generate_204',
+      latencyTestUrl: 'https://www.gstatic.com/generate_204', theme: 'system',
     },
     shares: { applied: [], pendingApply: false, problems: {} },
     vmPackages: { level: 1, target: 1, tmuxInstalled: true, needsUpgrade: false },
@@ -239,8 +240,12 @@ function initial(scenario: string): Snapshot {
 }
 
 export function createMockBridge(): Bridge {
-  const scenario = new URLSearchParams(window.location.search).get('demo') ?? 'ok';
+  const params = new URLSearchParams(window.location.search);
+  const scenario = params.get('demo') ?? 'ok';
   let snap = initial(scenario);
+  // ?theme=light|dark：截图核对两套配色用
+  const theme = params.get('theme');
+  if (theme === 'light' || theme === 'dark') snap = { ...snap, settings: { ...snap.settings, theme } };
   const listeners = new Set<(s: Snapshot) => void>();
   const emit = () => listeners.forEach((l) => l(snap));
   const update = (patch: Partial<Snapshot>) => {
@@ -397,6 +402,12 @@ export function createMockBridge(): Bridge {
       return { results: latency, url, unifiedDelay: true };
     },
     refreshCore: async () => undefined,
+    renameSession: async (from: string, to: string) => {
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(to)) throw new Error('会话名只能用 A-Z a-z 0-9 _ -，最长 64');
+      if (snap.sessions.some((s) => s.name === to)) throw new Error(`已经有叫 ${to} 的会话`);
+      update({ sessions: snap.sessions.map((s) => (s.name === from ? { ...s, name: to } : s)) });
+      return true;
+    },
     killSession: async (name: string) => {
       update({ sessions: snap.sessions.filter((s) => s.name !== name) });
       return true;

@@ -450,6 +450,14 @@ function General() {
         )}
         <CliRow />
         <div className="setting-row">
+          <span className="grow">外观</span>
+          <select className="input" value={snap.settings.theme} onChange={(e) => save({ theme: e.target.value as Settings['theme'] })}>
+            <option value="system">跟随系统</option>
+            <option value="dark">深色</option>
+            <option value="light">浅色</option>
+          </select>
+        </div>
+        <div className="setting-row">
           <span className="grow">验收记录</span>
           <button className="btn sm" onClick={() => run(() => act('exportReport'))}>
             导出为 Markdown
@@ -463,7 +471,7 @@ function General() {
         </div>
       </div>
       <p className="tiny faint">
-        App {snap.appVersion} · 套件 {snap.kitVersion} · 主题：深色（跟随设计稿，浅色以后再加）
+        App {snap.appVersion} · 套件 {snap.kitVersion}
       </p>
     </div>
   );

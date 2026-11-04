@@ -6,6 +6,7 @@
 #   list 还会输出 tmux 会话：SESSION␟会话名␟创建时间␟是否有客户端接入␟所在目录；
 #        最后是 VALUE tmux_installed 1|0、VALUE vm_level <级别>
 #   kill-session <会话名>  结束 cc 的一个 tmux 会话
+#   rename-session <旧名> <新名>  给 cc 的一个 tmux 会话改名（接入着的客户端不受影响）
 #   events <偏移|end>  ~/.ccvm/events.jsonl 里偏移之后的 Claude 事件：CLAUDE␟时间␟事件␟目录␟通知类型␟通知文字；
 #                     最后一行 VALUE events_size <字节数>。end 只报大小。文件由 cc 的 hook 写，内容按不可信处理
 # 只读 cc 自己的仓库和进程；不读 ~/.claude。
@@ -73,6 +74,14 @@ kill_session() {
   local name="$1"
   [[ "$name" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || { echo "FAIL session.kill 无效的会话名"; return 1; }
   if tmux kill-session -t "=$name" 2>/dev/null; then echo "PASS session.kill 已结束会话 $name"; else echo "FAIL session.kill 没有这个会话：$name"; return 1; fi
+}
+
+rename_session() {
+  local old="$1" new="$2"
+  [[ "$old" =~ ^[A-Za-z0-9_-]{1,64}$ && "$new" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || { echo "FAIL session.rename 会话名只能用 A-Z a-z 0-9 _ -，最长 64"; return 1; }
+  tmux has-session -t "=$old" 2>/dev/null || { echo "FAIL session.rename 没有这个会话：$old"; return 1; }
+  if tmux has-session -t "=$new" 2>/dev/null; then echo "FAIL session.rename 已经有叫 $new 的会话"; return 1; fi
+  if tmux rename-session -t "=$old" "$new" 2>/dev/null; then echo "PASS session.rename 已把 $old 改名为 $new"; else echo "FAIL session.rename 改名失败：$old"; return 1; fi
 }
 
 claude_events() {
@@ -156,6 +165,7 @@ vm_packages() {
 case "${1:-}" in
   list) list_projects; list_sessions; vm_packages ;;
   kill-session) [ $# -eq 2 ] || { echo "FAIL session.kill 缺少会话名"; exit 1; }; kill_session "$2" ;;
+  rename-session) [ $# -eq 3 ] || { echo "FAIL session.rename 需要旧名和新名"; exit 1; }; rename_session "$2" "$3" ;;
   events) [ $# -eq 2 ] || { echo "FAIL guest.usage 缺少偏移"; exit 1; }; claude_events "$2" ;;
   claude) claude_info ;;
   clone) [ $# -eq 2 ] || { echo "FAIL project.url 缺少 Git 地址"; exit 1; }; clone_project "$2" ;;

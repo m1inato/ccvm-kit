@@ -1,4 +1,5 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { applyTermTheme } from './terms';
 import { Ctx, errorText, useNow, useRoute, useSnapshot, type AppCtx } from './api';
 import { SharesBadge, StatusPill, Toast } from './components/common';
 import { FilesPage } from './pages/Files';
@@ -26,6 +27,18 @@ export function App() {
       return undefined;
     }
   }, []);
+
+  // 主题：深色 / 浅色写在 data-theme 上；跟随系统时去掉，交给 prefers-color-scheme
+  const theme = snap?.settings.theme ?? 'system';
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'system') delete root.dataset.theme;
+    else root.dataset.theme = theme;
+    applyTermTheme();
+    const mq = window.matchMedia('(prefers-color-scheme: light)');
+    mq.addEventListener('change', applyTermTheme);
+    return () => mq.removeEventListener('change', applyTermTheme);
+  }, [theme]);
 
   const isCapsule = route.startsWith('/capsule');
   document.documentElement.classList.toggle('capsule', isCapsule);
