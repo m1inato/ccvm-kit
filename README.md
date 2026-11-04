@@ -120,6 +120,7 @@ Ubuntu 默认的 `~/.profile` 会在下次登录时加入已存在的 `~/.local/
 | 只读验收 | `bash scripts/check.sh` |
 | 断流与抓包测试 | `bash scripts/leaktest.sh` |
 | 确认新出口后更新基线 | `bash scripts/rebaseline.sh` |
+| 给早先部署的 VM 补装软件包（git、tmux），完成后自动验收 | `bash scripts/upgrade.sh` |
 | 启停 VM（先检查 Lima 配置） | `bash scripts/vm.sh start` / `stop` |
 | VM 里的项目 | `bash scripts/workspace.sh list` |
 | 共享文件夹（读写，会重启 VM） | 编辑 `state/shares.txt` 后 `bash scripts/share.sh apply`；查看 `bash scripts/share.sh status` |

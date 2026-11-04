@@ -60,6 +60,7 @@ case "$1" in
   list)
     [ $# -eq 1 ] || die "list 不带参数"
     info "~/work 下的项目"
+    value vm_level_target "$VM_LEVEL"
     rc=0; vm_script_cc workspace.sh list | relay_projects || rc=$?
     [ "$rc" -eq 0 ] || die "读取项目列表失败"
     ;;

@@ -77,6 +77,29 @@ export function WorkspacePage() {
           </div>
         )}
 
+        {snap.vmPackages.needsUpgrade && running && (
+          <div className="callout row" style={{ marginBottom: 16 }}>
+            <span className="grow">
+              <b>VM 需要补装软件包</b>
+              <span className="muted">
+                {' '}
+                {snap.vmPackages.tmuxInstalled === false ? '没有 tmux，内嵌终端用不了。' : ''}
+                早先部署的 VM 缺后来新加的包（git、tmux），补装只装软件包，不碰网络配置，完成后自动验收。
+              </span>
+            </span>
+            <button
+              className="btn sm"
+              disabled={snap.jobs.some((j) => j.state === 'running' && j.kind === 'vm-upgrade')}
+              onClick={() => run(async () => {
+                const id = await act('vmUpgrade');
+                if (id) go(`/jobs/${id}`);
+              })}
+            >
+              补装
+            </button>
+          </div>
+        )}
+
         <CloneBar disabled={!running} />
 
         <div className="filters">

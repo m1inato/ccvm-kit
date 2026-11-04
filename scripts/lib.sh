@@ -6,6 +6,8 @@ KIT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT=17897
 TRACE_URL="https://1.1.1.1/cdn-cgi/trace"   # 字面 IPv4（证书含 IP SAN），两端都不涉及 DNS 与 IPv6 差异
 LIMA_MIN="2.1.0"
+# VM 软件包级别：guest/upgrade.sh 的步骤数。install.sh 新装时直接写这个级别；App 低于它就提示补装
+VM_LEVEL=1
 
 if [ -t 1 ]; then B=$'\033[1;34m'; G=$'\033[1;32m'; Y=$'\033[1;33m'; R=$'\033[1;31m'; N=$'\033[0m'; else B= G= Y= R= N=; fi
 

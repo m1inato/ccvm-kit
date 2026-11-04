@@ -381,6 +381,16 @@ async function dispatch(name: string, args: unknown[]): Promise<unknown> {
       return controller.vmStart();
     case 'vmStop':
       return controller.vmStop();
+    case 'vmUpgrade': {
+      const ok = await confirm(
+        '补装 VM 软件包？',
+        '会在 VM 里以 root 运行 apt-get，安装早先部署时还没有的软件包（git、tmux），经固定出口下载。不碰防火墙、TUN、sing-box 和 DNS 配置。\n\n完成后自动做一次完整验收。进行期间不做别的检查和独占任务。',
+        '补装',
+        'question',
+      );
+      if (!ok) return null;
+      return controller.vmUpgrade();
+    }
     case 'cancelJob':
       return controller.cancelJob(str(args[0], 'id'));
     case 'jobLog':

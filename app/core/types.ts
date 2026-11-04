@@ -141,7 +141,7 @@ export interface VmInfo {
   error?: string;
 }
 
-export type JobKind = 'setup' | 'check-full' | 'leaktest' | 'clone' | 'vm-start' | 'vm-stop' | 'shares' | 'push' | 'pull';
+export type JobKind = 'setup' | 'check-full' | 'leaktest' | 'clone' | 'vm-start' | 'vm-stop' | 'shares' | 'push' | 'pull' | 'vm-upgrade';
 export type JobState = 'running' | 'done' | 'failed' | 'cancelled';
 
 export interface JobSummary {
@@ -225,6 +225,16 @@ export interface Settings {
   latencyTestUrl: string;
 }
 
+export interface VmPackages {
+  /** VM 里 /var/lib/ccvm/level；还没读到时为空 */
+  level?: number;
+  /** 套件要求的级别（lib.sh 的 VM_LEVEL，由 workspace.sh list 给出） */
+  target?: number;
+  tmuxInstalled?: boolean;
+  /** 读到了而且确实缺：级别不够或没有 tmux */
+  needsUpgrade: boolean;
+}
+
 export interface SharesState {
   /** 最近一次 share.sh status：shares.txt 里（也就是应用过的）共享 */
   applied: { path: string; name: string; view: string }[];
@@ -271,6 +281,8 @@ export interface Snapshot {
   core?: CoreStatus;
   captions: Caption[];
   shares: SharesState;
+  /** VM 的软件包：级别低于套件要求、或者没有 tmux 时提示补装（不算出错） */
+  vmPackages: VmPackages;
   /** 手动验收矩阵：项目 id → 勾选时间 */
   matrix: Record<string, number>;
   settings: Settings;
@@ -322,6 +334,8 @@ export interface Actions {
   killSession(name: string): Promise<boolean>;
   setHooks(enabled: boolean): Promise<Settings>;
   cliStatus(): Promise<CliStatus>;
+  /** 补装 VM 软件包：主进程先弹系统对话框确认，取消时返回 null；确认后是后台任务 */
+  vmUpgrade(): Promise<string | null>;
   /** 主进程弹出选文件夹的对话框；取消时返回 null */
   addSharedFolder(): Promise<Settings | null>;
   removeSharedFolder(path: string): Promise<Settings>;

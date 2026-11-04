@@ -4,7 +4,8 @@
 # 防火墙启用后本脚本不再访问网络，所以中途失败可以直接重跑。
 set -euo pipefail
 
-STAGE="${1:?用法: install.sh <包含配置文件的目录>}"
+STAGE="${1:?用法: install.sh <包含配置文件的目录> [软件包级别]}"
+LEVEL="${2:-0}"   # setup.sh 传入当前最高级别；新装的 VM 已经有全部软件包，不需要再走 upgrade.sh
 PROXY_URL="http://192.168.5.2:17897"
 TRACE_URL="https://1.1.1.1/cdn-cgi/trace"
 SB_SERIES_RE='^1\.14\.[0-9]+'   # 配置按 sing-box 1.14 编写；只接受 1.14.x
@@ -14,6 +15,7 @@ log() { printf '\033[1;34m[vm]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[vm] 错误:\033[0m %s\n' "$*" >&2; exit 1; }
 
 [ "$(id -u)" = 0 ] || die "需要 root"
+[[ "$LEVEL" =~ ^[0-9]{1,4}$ ]] || die "软件包级别必须是数字：$LEVEL"
 [ "$(uname -m)" = aarch64 ] || die "只支持 ARM64 客体"
 . /etc/os-release
 [ "${ID:-}" = ubuntu ] && [ "${VERSION_ID:-}" = 24.04 ] || die "只支持 Ubuntu 24.04（当前：${PRETTY_NAME:-unknown}）"
@@ -212,5 +214,6 @@ for _ in 1 2 3; do
 done
 [ -n "$ip_out" ] || { journalctl -u ccvm-tun -n 50 --no-pager >&2; die "cc 经 TUN 访问外网失败"; }
 as_cc getent ahostsv4 api.anthropic.com >/dev/null || die "DNS（DoH 经代理）解析失败"
+printf '%s\n' "$LEVEL" > /var/lib/ccvm/level && chmod 0644 /var/lib/ccvm/level
 touch /var/lib/ccvm/installed
 log "完成。VM 出口 IP：$ip_out"

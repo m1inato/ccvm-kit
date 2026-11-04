@@ -3,7 +3,8 @@
 #   list          每个项目一行：PROJECT␟名称␟分支␟改动数␟领先␟落后␟最后提交时间␟提交说明␟远端␟Claude 进程数␟最早启动时间
 #   claude        VALUE claude_installed 1|0、VALUE claude_version <版本>
 #   clone <地址>  克隆到 ~/work/<名称>；git 的进度写到 stderr
-#   list 还会输出 tmux 会话：SESSION␟会话名␟创建时间␟是否有客户端接入␟所在目录
+#   list 还会输出 tmux 会话：SESSION␟会话名␟创建时间␟是否有客户端接入␟所在目录；
+#        最后是 VALUE tmux_installed 1|0、VALUE vm_level <级别>
 #   kill-session <会话名>  结束 cc 的一个 tmux 会话
 #   events <偏移|end>  ~/.ccvm/events.jsonl 里偏移之后的 Claude 事件：CLAUDE␟时间␟事件␟目录␟通知类型␟通知文字；
 #                     最后一行 VALUE events_size <字节数>。end 只报大小。文件由 cc 的 hook 写，内容按不可信处理
@@ -143,8 +144,17 @@ clone_project() {
   fi
 }
 
+# 补装提示用：tmux 装了没有、VM 的软件包级别（/var/lib/ccvm/level，读不到当作 0，App 会提示补装）
+vm_packages() {
+  local l
+  if command -v tmux >/dev/null 2>&1; then echo "VALUE tmux_installed 1"; else echo "VALUE tmux_installed 0"; fi
+  l="$(tr -d '[:space:]' < /var/lib/ccvm/level 2>/dev/null)" || l=0
+  [[ "$l" =~ ^[0-9]{1,4}$ ]] || l=0
+  echo "VALUE vm_level $((10#$l))"
+}
+
 case "${1:-}" in
-  list) list_projects; list_sessions ;;
+  list) list_projects; list_sessions; vm_packages ;;
   kill-session) [ $# -eq 2 ] || { echo "FAIL session.kill 缺少会话名"; exit 1; }; kill_session "$2" ;;
   events) [ $# -eq 2 ] || { echo "FAIL guest.usage 缺少偏移"; exit 1; }; claude_events "$2" ;;
   claude) claude_info ;;

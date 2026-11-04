@@ -22,6 +22,7 @@ case "$1" in
     body="$(cat)"
     case "$body" in
       *"ccvm-shares.service"*) f=shares ;;
+      *"补装软件包（升级步骤）"*) f=upgrade ;;
       *"VM 内以 cc 身份运行"*) f=workspace ;;
       *"会短暂停止 TUN"*) f=leaktest ;;
       *) f=selfcheck ;;

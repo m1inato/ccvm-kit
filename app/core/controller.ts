@@ -67,6 +67,8 @@ interface Persisted {
   checksInvalidBefore?: number;
   /** 最近一次 share.sh status 列出的共享 */
   shares?: ShareItem[];
+  /** 最近一次 workspace.sh list 读到的软件包状态 */
+  vmPackages?: { level?: number; target?: number; tmux?: boolean };
 }
 
 export function defaultSettings(home: string, dataDir: string): Settings {
@@ -93,7 +95,7 @@ export function defaultSettings(home: string, dataDir: string): Settings {
 const QUICK_TIMEOUT = 120_000;
 const SHORT_TIMEOUT = 90_000;
 /** 这些任务运行时不做快速检查，也不开始别的独占任务（断流测试会停掉 TUN） */
-const EXCLUSIVE: JobKind[] = ['setup', 'leaktest', 'vm-start', 'vm-stop', 'shares'];
+const EXCLUSIVE: JobKind[] = ['setup', 'leaktest', 'vm-start', 'vm-stop', 'shares', 'vm-upgrade'];
 const CAPTION_MS = 8000;
 
 export class Controller extends EventEmitter {
@@ -418,6 +420,11 @@ export class Controller extends EventEmitter {
     return this.startJob('vm-stop', '停止 VM', 'vm.sh', ['stop']);
   }
 
+  /** 调用前主进程已经弹框确认过 */
+  vmUpgrade(): string {
+    return this.startJob('vm-upgrade', '补装 VM 软件包', 'upgrade.sh', []);
+  }
+
   clone(url: string): string {
     const problem = gitUrlProblem(url);
     if (problem) throw new Error(problem);
@@ -487,6 +494,12 @@ export class Controller extends EventEmitter {
           .then(() => this.refreshVm())
           .then(() => this.refreshCore())
           .then(() => this.quickCheck('应用共享后'));
+        break;
+      case 'vm-upgrade':
+        // upgrade.sh 补装完会跑完整验收，事件并在同一个流里
+        if (result && job.state !== 'cancelled' && result.values.mode === 'full') this.state.lastFull = toRecord('full', result);
+        this.caption(ok ? 'ok' : 'error', ok ? 'VM 软件包已补装，完整验收通过' : `补装没有完成：${job.reason ?? ''}`);
+        void this.refreshProjects();
         break;
       case 'push':
       case 'pull':
@@ -645,6 +658,13 @@ export class Controller extends EventEmitter {
       this.state.projects = result.items.map(toProject);
       this.state.sessions = result.sessions;
       this.state.projectsAt = this.now();
+      const num = (v?: string) => (v !== undefined && /^\d{1,4}$/.test(v) ? Number(v) : undefined);
+      const tmux = result.values.tmux_installed;
+      this.state.vmPackages = {
+        level: num(result.values.vm_level),
+        target: num(result.values.vm_level_target),
+        tmux: tmux === '1' ? true : tmux === '0' ? false : undefined,
+      };
       this.projectsError = undefined;
     } else {
       this.projectsError = result.reason;
@@ -838,6 +858,7 @@ export class Controller extends EventEmitter {
       core: this.builtin() ? this.coreStatus : undefined,
       captions: this.captions,
       shares: this.sharesState(),
+      vmPackages: vmPackagesState(this.state.vmPackages),
       matrix: this.state.matrix ?? {},
       settings: this.settings,
       paths: {
@@ -873,6 +894,12 @@ export class Controller extends EventEmitter {
   private file(name: string): string {
     return path.join(this.host.dataDir, name);
   }
+}
+
+/** 只有读到了、而且确实缺，才提示补装；读不到就不提示（这不是安全判断，只是功能提示） */
+export function vmPackagesState(p: Persisted['vmPackages']): Snapshot['vmPackages'] {
+  const low = p?.level !== undefined && p.target !== undefined && p.level < p.target;
+  return { level: p?.level, target: p?.target, tmuxInstalled: p?.tmux, needsUpgrade: low || p?.tmux === false };
 }
 
 export function toRecord(kind: CheckRecord['kind'], result: RunResult): CheckRecord {

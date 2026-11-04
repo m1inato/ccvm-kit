@@ -28,6 +28,7 @@ export const SCRIPTS = new Set([
   'workspace.sh',
   'share.sh',
   'files.sh',
+  'upgrade.sh',
 ]);
 
 export function scriptPath(kitDir: string, script: string): string {

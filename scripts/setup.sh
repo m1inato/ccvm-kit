@@ -31,13 +31,13 @@ ok "VM 就绪：$(vm sh -c '. /etc/os-release; echo $PRETTY_NAME') / $(vm uname 
 
 step setup.install "3/5 安装 VM 网络层（sing-box TUN + 防火墙 + cc 用户）"
 if vm sudo test -e /var/lib/ccvm/installed; then
-  ok "已安装，跳过"
+  ok "已安装，跳过（早先部署的 VM 缺软件包时，用 scripts/upgrade.sh 补装）"
 else
   warn "引导期（此步骤完成前）VM 的系统流量（apt/snap/NTP 等）走 Mac 当前网络；此时不要登录 Claude 或放入任何凭据"
   stage="$(vm mktemp -d /tmp/ccvm-stage.XXXXXX)"
   limactl copy "$KIT/config/sing-box.json" "$KIT/config/firewall.nft.in" "$KIT/config/lockdown.nft" \
     "$KIT/guest/install.sh" "$VM:$stage/"
-  vm sudo bash "$stage/install.sh" "$stage"
+  vm sudo bash "$stage/install.sh" "$stage" "$VM_LEVEL"
   vm sudo rm -rf -- "$stage"
 fi
 

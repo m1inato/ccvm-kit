@@ -48,6 +48,7 @@ case "$1" in
       *"VM 内以 cc 身份运行"*) out="$STUB_WORKSPACE_OUT"; rc="${STUB_WORKSPACE_RC:-0}" ;;
       *"断流 / 抓包"*|*"会短暂停止 TUN"*) out="$STUB_LEAK_OUT"; rc="${STUB_LEAK_RC:-0}" ;;
       *"ccvm-shares.service"*) out="${STUB_SHARES_OUT-}"; rc="${STUB_SHARES_RC:-0}" ;;
+      *"补装软件包（升级步骤）"*) out="${STUB_UPGRADE_OUT-}"; rc="${STUB_UPGRADE_RC:-0}" ;;
       *) out="$STUB_SELFCHECK_OUT"; rc="${STUB_SELFCHECK_RC:-0}" ;;
     esac
     [ -n "$out" ] && cat "$out"

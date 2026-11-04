@@ -26,6 +26,7 @@
 - 修复 macOS Bash 3.2 下共享路径错误提示紧跟中文标点时的变量解析问题；新增代理环境清理与挂载类型的回归测试。
 - 桌面端修复：`refreshVm` 在拿到登录 shell 的 PATH 之前不再运行，较早发起的结果也不会覆盖较新的（原来会偶发地把 VM 错报成「找不到 limactl」）。
 - 测延迟和 Clash Verge 对齐口径：临时核心开 `unified-delay`，测试地址可在设置里改（默认 generate_204），每个节点热身一次再取第二次结果，超时 5 秒；界面显示实际用的地址。
+- 新增 `upgrade.sh` 与 VM 内 `guest/upgrade.sh`：按 `/var/lib/ccvm/level` 给已部署的 VM 补装后来新加的软件包（第 1 步：`git`、`tmux`），不碰网络配置，完成后自动完整验收。新装的 VM 由 `install.sh` 直接写入当前级别。`workspace.sh list` 输出 `tmux_installed`、`vm_level`、`vm_level_target`；桌面端在需要时显示灰色的「VM 需要补装软件包」卡片（不算出错），补装是后台任务。
 - 桌面胶囊修复：窗口跟内容一样大（原来 480×170 的透明窗口会挡住下面窗口的点击）；按钮第一下就能点（`acceptFirstMouse`）；打开胶囊不再隐藏 Dock 图标；显示器变化后拉回屏幕内；胶囊里的操作失败时显示原因。
 
 - 打包不再生成校验文件；桌面端判断节点是否变化改为逐字段比较内容。项目不使用这类哈希，规则见 `AGENTS.md`。

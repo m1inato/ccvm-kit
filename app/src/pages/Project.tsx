@@ -19,6 +19,8 @@ export function ProjectPage({ name }: { name: string }) {
 
   const p = snap.projects.find((x) => x.name === name);
   const blocked = snap.newSessionsBlocked;
+  // 没有 tmux 时新会话开不起来（接回已有会话不受影响）
+  const noTmux = snap.vmPackages.tmuxInstalled === false;
   const running = snap.vm.status === 'Running';
   const vmSessions = snap.sessions.filter((s) => s.project === name);
   const local = termsOf(name);
@@ -54,7 +56,7 @@ export function ProjectPage({ name }: { name: string }) {
         {p && <span className="chip mono">{p.branch}</span>}
         {p && <span className="tiny muted">{p.dirty ? `${p.dirty} 个未提交改动` : '干净'}</span>}
         <span className="spacer" />
-        <button className="btn sm" disabled={blocked || !running} onClick={() => run(() => act('openTerminal', name))} title="用外部终端（Terminal / iTerm / Ghostty）新建一个 tmux 会话，和内嵌终端开的一样出现在下面的列表里">
+        <button className="btn sm" disabled={blocked || noTmux || !running} onClick={() => run(() => act('openTerminal', name))} title="用外部终端（Terminal / iTerm / Ghostty）新建一个 tmux 会话，和内嵌终端开的一样出现在下面的列表里">
           外部终端
         </button>
         <button className="btn sm" disabled={!running} onClick={() => go(`/files/${encodeURIComponent(`/home/cc/work/${name}`)}`)} title="浏览、上传、下载这个项目里的文件">
@@ -88,7 +90,7 @@ export function ProjectPage({ name }: { name: string }) {
               <Dot level="busy" /> Claude 运行中 · {duration(p.claudeSince, now)}
             </div>
           )}
-          <button className="btn sm" disabled={blocked || !running || busy} onClick={() => open('new')} title={blocked ? '核实之前不打开新会话' : ''}>
+          <button className="btn sm" disabled={blocked || noTmux || !running || busy} onClick={() => open('new')} title={blocked ? '核实之前不打开新会话' : ''}>
             ＋ 新会话
           </button>
           {current && vmSessions.some((s) => s.name === current) && (
@@ -111,6 +113,14 @@ export function ProjectPage({ name }: { name: string }) {
         </aside>
 
         <section className="center with-term">
+          {snap.vmPackages.tmuxInstalled === false && (
+            <div className="callout row">
+              <span className="grow">VM 里没有 tmux，内嵌终端开不了新会话：先补装软件包。</span>
+              <button className="btn sm" onClick={() => go('/')}>
+                去首页补装
+              </button>
+            </div>
+          )}
           {blocked && (
             <div className="callout err">
               {snap.headline}：{snap.detail} 正在跑的会话不受影响，可以接回；新会话先不开。
@@ -139,7 +149,7 @@ export function ProjectPage({ name }: { name: string }) {
                   </button>
                 );
               })}
-              <button className="term-tab" disabled={blocked || !running || busy} onClick={() => open('new')} title="新会话：先做检查，再在 VM 里开一个 tmux 会话">
+              <button className="term-tab" disabled={blocked || noTmux || !running || busy} onClick={() => open('new')} title="新会话：先做检查，再在 VM 里开一个 tmux 会话">
                 ＋
               </button>
             </div>
@@ -152,7 +162,7 @@ export function ProjectPage({ name }: { name: string }) {
                     <span>{busy ? '正在连接…（新会话会先做一遍检查）' : vmSessions.length ? '选一个会话接入，或者开一个新会话' : '还没有会话。开一个新会话，在里面运行 claude'}</span>
                     {error && <span className="small err-text">{error}</span>}
                     {!busy && (
-                      <button className="btn primary" disabled={blocked || !running} onClick={() => open('new')}>
+                      <button className="btn primary" disabled={blocked || noTmux || !running} onClick={() => open('new')}>
                         新会话
                       </button>
                     )}

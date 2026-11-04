@@ -338,3 +338,34 @@ describe('Controller: shared folders and file transfer', () => {
     await settle([...ids, pull]);
   });
 });
+
+describe('Controller: VM package upgrade', () => {
+  it('suggests an upgrade only when workspace.sh reports a missing package or a low level', async () => {
+    c = make();
+    await c.init();
+    expect(c.snapshot().vmPackages.needsUpgrade).toBe(false); // 还没读到：不提示
+    f.set('workspace.out', 'VALUE tmux_installed 0\nVALUE vm_level 0\n');
+    await c.refreshProjects();
+    let snap = c.snapshot();
+    expect(snap.vmPackages).toEqual({ level: 0, target: 1, tmuxInstalled: false, needsUpgrade: true });
+    expect(snap.issues.some((i) => /软件包|tmux/.test(i.title))).toBe(false); // 不算出错
+    f.set('workspace.out', 'VALUE tmux_installed 1\nVALUE vm_level 1\n');
+    await c.refreshProjects();
+    snap = c.snapshot();
+    expect(snap.vmPackages.needsUpgrade).toBe(false);
+  });
+
+  it('runs upgrade.sh as an exclusive background job and records the full check', async () => {
+    c = make();
+    await c.init();
+    await waitFor(() => c.snapshot().lastQuick && !c.snapshot().checking);
+    f.set('upgrade.out', 'PASS vm.upgrade 已补装到级别 1\nVALUE vm_level 1\n');
+    const id = c.vmUpgrade();
+    expect(c.snapshot().jobs.find((j) => j.id === id)?.kind).toBe('vm-upgrade');
+    expect(() => c.fullCheck()).toThrow(/还在进行/);
+    const job = await waitFor(() => c.snapshot().jobs.find((j) => j.id === id && j.state !== 'running'), 20_000);
+    expect(job.state, job.reason).toBe('done');
+    await waitFor(() => c.snapshot().lastFull);
+    expect(c.snapshot().lastFull?.checks.some((ch) => ch.id === 'vm.upgrade' && ch.ok)).toBe(true);
+  });
+});
