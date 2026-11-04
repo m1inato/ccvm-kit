@@ -59,6 +59,30 @@
 - **node-pty 是原生模块**：`npm install` 后要 `npm run rebuild` 按 Electron 的 ABI 编译。它延迟加载：编译不对时只有内嵌终端不可用，菜单栏、检查和外部终端照常工作。
 - **完成提醒 hook**：`scripts/hooks.sh enable` 在 VM 里写 `/usr/local/lib/ccvm/claude-hook` 和 `/etc/claude-code/managed-settings.d/50-ccvm.json`（都是 root 所有，cc 改不了；不动已有的 `managed-settings.json`）。hook 用 `async`，永远 exit 0、不输出任何东西，所以不会影响 Claude（Stop hook 退出码 2 会阻止 Claude 停下，这里刻意避开）。它只记事件类型、时间、工作目录和截断到 160 字的通知文字；Stop 事件带的 Claude 最后一条回复不记录。App 每 10 秒经 SSH 从 `~/.ccvm/events.jsonl` 读新事件；第一次从文件末尾开始，不补发旧事件。事件文件 cc 可以写，所以内容按不可信处理：只接受 Stop / Notification，去掉控制字符，只当文字显示。「做完了」同一项目 5 分钟内只弹一次，「在等你」1 分钟内一次，只出字幕，不发系统通知。
 
+## 外部终端、`ccvm` 与 Ghostty
+
+- **一份环境设置**：清代理变量、设 `CCVM_*` 和 `PATH`、调用 `enter.sh` 只写在 App 生成的 `ccvm` 脚本里（`app/core/cli.ts`）。App 自己用的一份在 `~/Library/Application Support/CCVM/bin/ccvm`，用户点「安装」后另写一份到 `~/.local/bin/ccvm`。Terminal / iTerm 运行的 `.command` 文件只有一行 `exec /bin/bash <ccvm> [项目]`；Ghostty 直接运行 `ccvm`。设置或登录 shell 的 `PATH` 变了，两份都自动重写；`~/.local/bin/ccvm` 已存在但不是 CCVM 生成的（第二行不是「由 CCVM 生成，会被覆盖。」），App 不覆盖它。
+- **`ccvm <项目>` 的会话名**：`enter.sh --project P --session auto` 在检查通过之后，以 cc 身份读 `tmux list-sessions`（没有 tmux 服务端时当作没有会话），按 App 的 `nextSessionName` 同一规则取名：项目名里 `[A-Za-z0-9_-]` 以外的字符换成 `_`，接 `-序号`，取第一个空闲的序号。所以外部终端开的会话和内嵌终端开的一样出现在项目页。
+- **Ghostty**：主进程用 `osascript` 执行 AppleScript（Ghostty 1.3.0 起支持）：`new surface configuration`，`command` 设成 `ccvm` 的绝对路径加参数，`initial working directory` 设成家目录，`wait after command` 设为真（检查不过被拒绝时窗口留着，能看到原因），然后 `new window with configuration`。`command` 带参数时 Ghostty 用 `/bin/sh -c` 执行，所以每个参数先按 shell 单引号加引号，整串再转义 `\` 和 `"` 写进 AppleScript。参数只来自校验过的项目名（`[A-Za-z0-9._-]`），仍然照样转义。被拒绝「自动化」权限时提示去 系统设置 → 隐私与安全性 → 自动化 里允许；AppleScript 不可用（Ghostty 低于 1.3.0）时提示升级或改用 `ccvm`。`open -na Ghostty --args -e …` 的行为文档里没有说明，不作为方案。
+- **为什么做不到「在 VM 窗口里按 Cmd+T 自动进 VM」**：Ghostty 的配置不按窗口区分（`command` 对所有新窗口和标签生效），`new_tab` 动作也不能带命令。替代办法：Cmd+T 后输入 `ccvm`；或者这个 Ghostty 只用来开 VM 时，在配置里写 `command = ~/.local/bin/ccvm`。
+- **快捷键 `cmd+shift+t` 新标签并输入 `ccvm`，尚未实测，暂不写进用法**：
+
+  ```
+  keybind = cmd+shift+t=new_tab
+  keybind = chain=text:ccvm\n
+  ```
+
+  Ghostty 文档只说 chain 里的动作「按顺序执行」，没有说明 `new_tab` 之后的 `text:` 是输进新标签还是原来的标签。要在真机上试：文字进了新标签才写进 README；进了原来的标签就删掉这一条。
+
+### 外部终端还没上机验证的
+
+这一轮在 Linux 容器里完成，以下几项必须在 Mac 上逐项确认，结果补到这里：
+
+1. 设置选 Ghostty 后，「在终端打开」能开出一个 Ghostty 窗口，先过检查再进 cc；拒绝「自动化」权限时界面给出提示。
+2. 在 Ghostty 里按 Cmd+T，输入 `ccvm my-api`，新建的会话出现在 App 项目页的会话列表里。
+3. 出口出错时，`ccvm my-api` 被拒绝，`ccvm -a <已有会话>` 可以接入。
+4. 上面的快捷键到底输进哪个标签。
+
 ## VS Code 远程为什么先不做
 
 设计方案只要求「一键用 VS Code 打开时写入 `remote.autoForwardPorts: false`」。核对后发现，VS Code 远程连接在 VM 和 Mac 之间打开的通道不止端口转发：

@@ -54,7 +54,7 @@ export function ProjectPage({ name }: { name: string }) {
         {p && <span className="chip mono">{p.branch}</span>}
         {p && <span className="tiny muted">{p.dirty ? `${p.dirty} 个未提交改动` : '干净'}</span>}
         <span className="spacer" />
-        <button className="btn sm" disabled={blocked || !running} onClick={() => run(() => act('openTerminal', name))} title="用外部终端（Terminal / iTerm）进入，不开 tmux">
+        <button className="btn sm" disabled={blocked || !running} onClick={() => run(() => act('openTerminal', name))} title="用外部终端（Terminal / iTerm / Ghostty）新建一个 tmux 会话，和内嵌终端开的一样出现在下面的列表里">
           外部终端
         </button>
         <button className="btn sm ghost" onClick={() => setPanel(!panel)} title="收起 / 展开右侧面板">

@@ -30,6 +30,11 @@ case "$1" in
       *"{{.CPUs}}"*) echo "4 6442450944 64424509440" ;;
     esac ;;
   shell)
+    case "$*" in
+      *"tmux list-sessions"*)
+        [ -n "${STUB_TMUX_SESSIONS+x}" ] || { echo "no server running" >&2; exit 1; }
+        printf '%s' "$STUB_TMUX_SESSIONS"; exit 0 ;;
+    esac
     body="$(cat)"
     case "$body" in
       *"VM 内以 cc 身份运行"*) out="$STUB_WORKSPACE_OUT"; rc="${STUB_WORKSPACE_RC:-0}" ;;
@@ -342,8 +347,30 @@ class EventTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("new-session", self.log.read_text())
 
+    def test_enter_auto_session_picks_next_free_name(self):
+        result = self.run_script("enter.sh", "--project", "my-api", "--session", "auto",
+                                 STUB_TMUX_SESSIONS="my-api-1\r\nmy-api-2\r\nscratch\r\nmy-api-10\r\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.log.read_text()
+        self.assertIn("sudo -u cc -H tmux list-sessions -F #{session_name}", calls)
+        self.assertIn("tmux new-session -A -s my-api-3 -c /home/cc/work/my-api", calls)
+
+    def test_enter_auto_session_sanitizes_project_name_and_survives_no_tmux_server(self):
+        # 没有 STUB_TMUX_SESSIONS：桩模拟「没有 tmux 服务端」，list-sessions 失败，当作没有会话
+        result = self.run_script("enter.sh", "--project", "my.api", "--session", "auto")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("tmux new-session -A -s my_api-1 -c /home/cc/work/my.api", self.log.read_text())
+
+    def test_enter_auto_session_still_requires_passing_checks(self):
+        self.selfcheck.write_text("FAIL vm.tun_up TUN 停了\nEGRESS \n")
+        result = self.run_script("enter.sh", "--project", "my-api", "--session", "auto",
+                                 STUB_SELFCHECK_RC="1", STUB_TMUX_SESSIONS="")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("new-session", self.log.read_text())
+        self.assertNotIn("list-sessions", self.log.read_text())
+
     def test_enter_rejects_bad_session_arguments(self):
-        for args in [["--attach", "a b"], ["--session", "x"], ["--attach", "a", "--project", "p"], ["--project", "p", "--session", "a.b"]]:
+        for args in [["--attach", "a b"], ["--session", "x"], ["--session", "auto"], ["--attach", "a", "--project", "p"], ["--project", "p", "--session", "a.b"]]:
             with self.subTest(args=args):
                 if self.log.exists():
                     self.log.unlink()

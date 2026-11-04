@@ -127,6 +127,13 @@ describe('Controller end to end', () => {
     expect(() => c.updateSettings({ stateDir: 'relative' })).toThrow();
     expect(() => c.updateSettings({ vmName: '../x' })).toThrow();
   });
+
+  it('settings: terminal app is one of Terminal / iTerm / Ghostty', () => {
+    c = make();
+    expect(c.updateSettings({ terminalApp: 'Ghostty' }).terminalApp).toBe('Ghostty');
+    expect(c.updateSettings({ terminalApp: 'iTerm' }).terminalApp).toBe('iTerm');
+    expect(c.updateSettings({ terminalApp: 'Hyper' as never }).terminalApp).toBe('Terminal');
+  });
 });
 
 describe('Controller: Claude hook events and tmux sessions', () => {
