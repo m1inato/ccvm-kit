@@ -1,0 +1,16 @@
+# Per-machine configuration and deployment state
+/state/
+/LOCAL_SETUP.md
+/config/local.env
+/config/*.local.js
+.env
+.env.*
+!.env.example
+
+# Build and editor output
+/dist/
+__pycache__/
+*.py[cod]
+.DS_Store
+*.swp
+*.swo

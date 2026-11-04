@@ -1,0 +1,46 @@
+# Claude Code 隔离 VM（Lima VZ + Ubuntu 24.04 ARM64）
+# 由 scripts/setup.sh 使用独立的 LIMA_HOME（默认 ~/.lima-ccvm）创建，不继承你其他 Lima/Colima 的全局配置。
+
+# 2.1.0 起 Lima 通过 guest agent（vsock，不走网络）每 10 秒把 VM 时钟对齐到 Mac；
+# 本方案封锁了 VM 的 NTP(UDP)，所以这是 VM 唯一的校时来源，Mac 睡眠唤醒后不必重启 VM。
+minimumLimaVersion: 2.1.0
+
+# 镜像 URL 与 SHA-256 取自你安装的 Lima 自带模板（带日期镜像 + 校验，失效时回落到官方 release 镜像），
+# 不在这里写死日期目录，避免几个月后 404。
+base:
+- template:_images/ubuntu-24.04
+
+vmType: vz
+arch: aarch64
+cpus: 4
+memory: 6GiB
+disk: 60GiB
+
+# 不挂载任何 Mac 目录；项目在 VM 内 git clone。
+mounts: []
+
+# 只用默认 user-mode 网络：VM 内 192.168.5.2 = Mac 的 127.0.0.1（Lima 内置 gvisor-tap-vsock NAT）。
+# Clash 专用入口因此只需监听 127.0.0.1，无需「允许局域网」。
+networks: []
+
+ssh:
+  loadDotSSHPubKeys: false   # 不把 Mac ~/.ssh/*.pub 写进 VM
+  forwardAgent: false
+  forwardX11: false
+
+containerd:
+  system: false
+  user: false
+
+# 不把你终端里的 http(s)_proxy 注入 VM（否则 VM 会走 Clash 日常端口和日常规则）。
+propagateProxyEnv: false
+
+# 不把 VM 内任何监听端口转发到 Mac。
+# 注意 guestIPMustBeZero: false 不能省：guestIP 为 0.0.0.0 时 Lima 默认把它设为 true，
+# 这条规则就只匹配绑定在 0.0.0.0 的端口，绑定 127.0.0.1 的端口仍会被默认规则转发出来。
+portForwards:
+- guestIP: 0.0.0.0
+  guestIPMustBeZero: false
+  guestPortRange: [1, 65535]
+  proto: any
+  ignore: true
