@@ -1,8 +1,8 @@
 // 浏览器预览用的演示数据（不在 Electron 里加载）。IP、项目、节点名都是示例。
-// 用 ?demo=ok（自带核心）| cv（Clash Verge）| egress | node | busy | welcome | setup | stopped 切换场景。
+// 用 ?demo=ok（自带核心）| cv（Clash Verge）| egress | node | busy | welcome | setup | stopped | shares（共享文件夹）切换场景。
 import { renderClashScript, gitUrlProblem, projectNameFromUrl } from '../core/parsers';
 import { reportMarkdown } from '../core/report';
-import type { CheckEvent, CheckRecord, CoreConnection, CoreStatus, JobSummary, Snapshot } from '../core/types';
+import type { CheckEvent, CheckRecord, CoreConnection, CoreStatus, FileItem, JobSummary, Snapshot } from '../core/types';
 import type { Bridge } from './api';
 
 const BASE = '203.0.113.7';
@@ -139,8 +139,9 @@ function initial(scenario: string): Snapshot {
     settings: {
       vmName: 'ccvm', limaHome: '~/.lima-ccvm', stateDir: '~/Library/Application Support/CCVM/state', checkIntervalMin: 10,
       showCapsule: true, terminalApp: 'Terminal', launchAtLogin: true, egressMode: 'builtin', nodeName: '示例节点 · 东京 01',
-      claudeLoginConfirmed: true, welcomeDone: true, hooksEnabled: true,
+      claudeLoginConfirmed: true, welcomeDone: true, hooksEnabled: true, sharedFolders: [], sharesEnabled: false,
     },
+    shares: { applied: [], pendingApply: false, problems: {} },
     paths: { kit: '/Applications/CCVM.app/Contents/Resources/kit', state: '~/Library/Application Support/CCVM/state', baselineFile: 'expected-ip.txt', jobs: 'jobs' },
     kitVersion: '2.3.0', appVersion: '0.1.0',
   };
@@ -176,6 +177,22 @@ function initial(scenario: string): Snapshot {
     snap.issues = [{ key: 'node_changed:changed:1', kind: 'node_changed', title: '选定节点变了', detail: snap.detail, data: { node: NODES[0].name, kind: 'changed' } }];
     snap.newSessionsBlocked = true;
     snap.captions = [{ id: 1, at: now, level: 'error', text: `选定节点变了：${snap.detail}`, sticky: true, issueKey: snap.issues[0].key }];
+  }
+  if (scenario === 'shares') {
+    const folders = ['/Volumes/Work/my-api', '/Volumes/Work/design assets', '/Volumes/Work/new-notes'];
+    snap.settings = { ...snap.settings, sharesEnabled: true, sharedFolders: folders };
+    snap.shares = {
+      applied: [
+        { path: folders[0], name: 'my-api', view: '/home/cc/mac/my-api' },
+        { path: folders[1], name: 'design_assets', view: '/home/cc/mac/design_assets' },
+      ],
+      pendingApply: true,
+      problems: {},
+    };
+    const fix = (list: CheckEvent[]) =>
+      list.map((c) => (c.id === 'lima.effective_config' ? { ...c, msg: 'VM 实际配置：无额外网络，挂载只有允许的 2 个共享文件夹' } : c));
+    snap.lastQuick = snap.lastQuick && { ...snap.lastQuick, checks: fix(snap.lastQuick.checks) };
+    snap.lastFull = snap.lastFull && { ...snap.lastFull, checks: fix(snap.lastFull.checks) };
   }
   if (scenario === 'busy') {
     snap.jobs = [{ id: 'demo-leak', kind: 'leaktest', title: '断流测试', args: ['--json'], state: 'running', startedAt: now - 12_000 }, cloneJob];
@@ -239,6 +256,20 @@ export function createMockBridge(): Bridge {
     }, ms);
     return id;
   };
+
+  // 演示用的 VM 文件树：目录 → 条目
+  const t = Math.floor(Date.now() / 1000);
+  const tree = new Map<string, FileItem[]>([
+    ['/home/cc', [{ name: 'mac', file_type: 'dir', size: 4096, mtime: t - 3600 }, { name: 'work', file_type: 'dir', size: 4096, mtime: t - 600 }, { name: '.bashrc', file_type: 'file', size: 3771, mtime: t - 86400 * 9 }]],
+    ['/home/cc/work', [{ name: 'my-api', file_type: 'dir', size: 4096, mtime: t - 600 }, { name: 'web-app', file_type: 'dir', size: 4096, mtime: t - 86400 }]],
+    ['/home/cc/work/my-api', [{ name: 'src', file_type: 'dir', size: 4096, mtime: t - 900 }, { name: 'README.md', file_type: 'file', size: 2140, mtime: t - 3000 }, { name: 'package.json', file_type: 'file', size: 812, mtime: t - 7200 }, { name: 'passwd-link', file_type: 'link', size: 11, mtime: t - 99999 }]],
+    ['/home/cc/work/my-api/src', [{ name: 'index.ts', file_type: 'file', size: 5120, mtime: t - 900 }]],
+    ['/home/cc/work/web-app', []],
+    ['/home/cc/mac', [{ name: 'my-api', file_type: 'dir', size: 4096, mtime: t - 60 }]],
+    ['/home/cc/mac/my-api', [{ name: 'notes.md', file_type: 'file', size: 120, mtime: t - 60 }]],
+  ]);
+  const parent = (p: string) => p.replace(/\/[^/]+$/, '') || '/';
+  const base = (p: string) => p.slice(p.lastIndexOf('/') + 1);
 
   let cli = { path: '~/.local/bin/ccvm', installed: false, generated: false, onPath: false, hint: 'export PATH="$HOME/.local/bin:$PATH"' };
   const actions: Record<string, (...a: never[]) => unknown> = {
@@ -364,6 +395,57 @@ export function createMockBridge(): Bridge {
       update({ sessions: snap.sessions.filter((s) => s.name !== name) });
       return true;
     },
+    addSharedFolder: async () => {
+      const p = `/Volumes/Work/demo-${snap.settings.sharedFolders.length + 1}`;
+      update({ settings: { ...snap.settings, sharedFolders: [...snap.settings.sharedFolders, p] }, shares: { ...snap.shares, pendingApply: true } });
+      return snap.settings;
+    },
+    removeSharedFolder: async (p: string) => {
+      update({ settings: { ...snap.settings, sharedFolders: snap.settings.sharedFolders.filter((f) => f !== p) }, shares: { ...snap.shares, pendingApply: true } });
+      return snap.settings;
+    },
+    setSharesEnabled: async (on: boolean) => {
+      update({ settings: { ...snap.settings, sharesEnabled: on }, shares: { ...snap.shares, pendingApply: true } });
+      return snap.settings;
+    },
+    applyShares: () =>
+      job('shares', '应用共享文件夹并重启 VM', 3000, () => {
+        const folders = snap.settings.sharesEnabled ? snap.settings.sharedFolders : [];
+        const applied = folders.map((p) => {
+          const name = base(p).replace(/[^A-Za-z0-9._-]/g, '_');
+          return { path: p, name, view: `/home/cc/mac/${name}` };
+        });
+        update({ shares: { applied, pendingApply: false, problems: {} } });
+        caption('共享文件夹已应用，VM 已重启');
+      }),
+    listFiles: async (p: string) => {
+      await sleep(200);
+      const entries = tree.get(p);
+      if (!entries) throw new Error(`没能列出 ${p}`);
+      return { path: p, entries: [...entries].sort((a, b) => Number(b.file_type === 'dir') - Number(a.file_type === 'dir')) };
+    },
+    makeDir: async (p: string) => {
+      tree.set(p, []);
+      tree.set(parent(p), [...(tree.get(parent(p)) ?? []), { name: base(p), file_type: 'dir', size: 4096, mtime: Math.floor(Date.now() / 1000) }]);
+    },
+    removePath: async (p: string) => {
+      if (!window.confirm(p.startsWith('/home/cc/mac/') ? `这是 Mac 上的真实文件：删除 ${p}？` : `删除 ${p}？`)) return false;
+      tree.set(parent(p), (tree.get(parent(p)) ?? []).filter((e) => e.name !== base(p)));
+      return true;
+    },
+    pushPaths: async (paths: string[], dest: string) =>
+      paths.map((p) =>
+        job('push', `上传 ${base(p)}`, 1500, () => {
+          tree.set(dest, [...(tree.get(dest) ?? []), { name: base(p), file_type: 'file', size: 1000, mtime: Math.floor(Date.now() / 1000) }]);
+          caption(`上传 ${base(p)}：完成`);
+        }),
+      ),
+    chooseUpload: async (dest: string) => [
+      job('push', '上传 demo.txt', 1500, () => {
+        tree.set(dest, [...(tree.get(dest) ?? []), { name: 'demo.txt', file_type: 'file', size: 42, mtime: Math.floor(Date.now() / 1000) }]);
+      }),
+    ],
+    pullFile: async (p: string) => job('pull', `下载 ${base(p)}`, 1200, () => caption(`下载 ${base(p)}：完成`)),
     cliStatus: async () => cli,
     installCli: async () => {
       cli = { ...cli, installed: true, generated: true };

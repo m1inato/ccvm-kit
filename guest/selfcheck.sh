@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# VM 内以 root 运行（Mac 端经 stdin 传入：limactl shell ccvm sudo bash -s -- <基线IP> [quick]）。
+# VM 内以 root 运行（Mac 端经 stdin 传入：limactl shell ccvm sudo bash -s -- <基线IP> [quick|full] [允许的共享名,逗号分隔]）。
 # 只读检查；输出「PASS|FAIL <稳定 id> <说明>」行，最后一行 "EGRESS <ip>"，有 FAIL 时退出码 1。
 # id 是 App 与文档引用的接口（docs/events.md），改说明可以，改 id 要同步。
 set -uo pipefail
 
 EXPECTED="${1:-}"
 MODE="${2:-full}"
+SHARES="${3:-}"
 TRACE_URL="https://1.1.1.1/cdn-cgi/trace"
 fails=0
 pass() { local id="$1"; shift; printf 'PASS %s %s\n' "$id" "$*"; }
@@ -14,6 +15,28 @@ check() { local id="$1" msg="$2"; shift 2; if "$@" >/dev/null 2>&1; then pass "$
 refuse() { local id="$1" msg="$2"; shift 2; if "$@" >/dev/null 2>&1; then fail "$id" "$msg"; else pass "$id" "$msg"; fi; }
 as_cc() { runuser -u cc -- env -i HOME=/home/cc USER=cc PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 "$@"; }
 tcp_open() { timeout 5 bash -c 'exec 3<>"/dev/tcp/$0/$1"' "$1" "$2"; }
+
+# 宿主目录挂载只允许 /mnt/ccvm-raw/<名字>（virtiofs）和 /home/cc/mac/<名字>（fuse.bindfs），名字必须在 $SHARES 里。
+# 其他任何一个都算失败并列出来。允许的挂载缺了不算失败：那是共享功能的问题（share.sh / shares.sh verify 报告），不是隔离问题。
+mounts_ok() {
+  local target fstype name bad=""
+  command -v findmnt >/dev/null 2>&1 || { echo "findmnt 不可用，无法确认"; return 1; }
+  while read -r target fstype; do
+    [ -n "$target" ] || continue
+    name=""
+    case "$fstype:$target" in
+      virtiofs:/mnt/ccvm-raw/*) name="${target#/mnt/ccvm-raw/}" ;;
+      fuse.bindfs:/home/cc/mac/*) name="${target#/home/cc/mac/}" ;;
+    esac
+    if [ -n "$name" ] && [[ "$name" =~ ^[A-Za-z0-9._-]{1,64}$ ]] && [ "$name" != . ] && [ "$name" != .. ] && [[ ",$SHARES," == *",$name,"* ]]; then
+      continue
+    fi
+    bad+="${target}（${fstype}） "
+  done < <(findmnt -rn -o TARGET,FSTYPE -t virtiofs,9p,fuse.sshfs,fuse.bindfs)
+  [ -z "$bad" ] && return 0
+  printf '%s\n' "$bad"
+  return 1
+}
 
 check vm.firewall_active "防火墙服务运行中" systemctl is-active --quiet ccvm-firewall.service
 main_rules_loaded() { local r; r="$(nft list chain inet ccvm output 2>/dev/null)" || return 1; [[ "$r" == *"dport 17897"* ]]; }
@@ -30,7 +53,11 @@ if [ "$MODE" != quick ]; then
   check vm.nftables_masked "通用 nftables.service 已屏蔽" bash -c '[ "$(systemctl is-enabled nftables.service 2>/dev/null)" = masked ]'
   check vm.resolv_static "/etc/resolv.conf 为静态文件且指向 172.31.255.2" bash -c '[ ! -L /etc/resolv.conf ] && [ "$(head -n1 /etc/resolv.conf)" = "nameserver 172.31.255.2" ]'
   check vm.ipv6_off "IPv6 已关闭" bash -c '[ "$(sysctl -n net.ipv6.conf.all.disable_ipv6)" = 1 ]'
-  check vm.no_host_mounts "没有宿主目录挂载" bash -c '[ -z "$(findmnt -rn -t virtiofs,9p,fuse.sshfs)" ]'
+  if bad_mounts="$(mounts_ok)"; then
+    pass vm.no_host_mounts "没有未经允许的宿主目录挂载${SHARES:+（允许的共享：$SHARES）}"
+  else
+    fail vm.no_host_mounts "有未经允许的宿主目录挂载：$bad_mounts"
+  fi
   refuse cc.no_priv_groups "cc 不在特权组" bash -c "id -nG cc | grep -Eqw 'sudo|admin|adm|lxd|docker'"
   refuse cc.no_sudo "cc 没有免密 sudo" as_cc sudo -n true
   check cc.no_proxy_env "cc 环境中没有代理变量" bash -c "! runuser -l cc -c env | grep -Eiq '^(https?|all|no)_proxy=.'"

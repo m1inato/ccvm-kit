@@ -64,6 +64,14 @@ function ChainPanel({ snap }: { snap: Snapshot }) {
   const nodeName = snap.settings.egressMode === 'builtin' ? snap.core?.node?.name : snap.settings.nodeName;
   const rows: { label: string; sub: string; level: Level; note?: string }[] = [
     { label: 'cc 用户', sub: '无 sudo，没有代理变量', level: st('cc.no_sudo'), note: merged.has('cc.no_sudo') ? why('cc.no_sudo') : '完整验收里检查' },
+    {
+      label: 'Mac 文件夹',
+      sub: snap.shares.applied.length
+        ? `共享 ${snap.shares.applied.length} 个 · 读写（VM 里在 /home/cc/mac）`
+        : '不共享：VM 里没有 Mac 的文件夹',
+      level: st('lima.effective_config'),
+      note: why('lima.effective_config'),
+    },
     { label: 'sb-tun', sub: 'sing-box TUN，所有 TCP 与 DNS 进 TUN', level: st('vm.tun_up'), note: why('vm.tun_up') },
     { label: '防火墙', sub: '主规则；TUN 停了也不会直连', level: st('vm.firewall_main_rules'), note: why('vm.firewall_main_rules') },
     {
@@ -89,7 +97,7 @@ function ChainPanel({ snap }: { snap: Snapshot }) {
         <h2 className={snap.level === 'error' ? 'err-text' : snap.level === 'ok' ? 'ok-text' : ''}>{headline}</h2>
         <p className="small muted">
           {snap.level === 'ok'
-            ? `这台 VM 里的 Claude、git、npm 都只经 ${ip} 出去，和你记住的出口一致。VM 自己连不到你的 Mac。`
+            ? `这台 VM 里的 Claude、git、npm 都只经 ${ip} 出去，和你记住的出口一致。VM 自己连不到你的 Mac。${snap.shares.applied.length ? `你共享的 ${snap.shares.applied.length} 个 Mac 文件夹 VM 可以读写。` : ''}`
             : snap.detail}
         </p>
       </div>

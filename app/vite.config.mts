@@ -19,5 +19,6 @@ export default defineConfig({
   plugins: [react(), csp],
   build: { outDir: 'dist', emptyOutDir: true, chunkSizeWarningLimit: 1500 }, // xterm 较大，界面从本地文件加载
   server: { port: 5199, strictPort: true },
-  test: { include: ['test/**/*.test.ts'], environment: 'node' },
+  // 控制器用例端到端跑真实脚本；整套并行时机器忙，单个用例给 15 秒
+  test: { include: ['test/**/*.test.ts'], environment: 'node', testTimeout: 15_000 },
 });

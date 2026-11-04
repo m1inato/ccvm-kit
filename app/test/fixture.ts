@@ -14,11 +14,14 @@ case "$1" in
     case "$*" in
       *--json*) [ -n "$status" ] && printf '{"name":"ccvm","status":"%s","cpus":4,"memory":6442450944,"disk":64424509440,"arch":"aarch64"}\n' "$status" ;;
       *"{{.Status}}"*) printf '%s\n' "$status" ;;
-      *"Config.Mounts"*) echo "0 0" ;;
+      *".Location"*) cat "$STUB_DIR/mounts" 2>/dev/null || true ;;
+      *"{{len .Config.Networks}}"*) echo 0 ;;
     esac ;;
+  edit) printf '%s' "$4" > "$STUB_DIR/edit" ;;
   shell)
     body="$(cat)"
     case "$body" in
+      *"ccvm-shares.service"*) f=shares ;;
       *"VM 内以 cc 身份运行"*) f=workspace ;;
       *"会短暂停止 TUN"*) f=leaktest ;;
       *) f=selfcheck ;;

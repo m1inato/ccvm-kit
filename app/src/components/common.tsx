@@ -40,6 +40,17 @@ export function StatusPill({ snap, onClick }: { snap: Snapshot; onClick?: () => 
   );
 }
 
+/** 共享文件夹开着时常驻在状态旁边：状态仍然是绿色，但 VM 能读写这些 Mac 文件夹 */
+export function SharesBadge({ snap, onClick }: { snap: Snapshot; onClick?: () => void }) {
+  const n = snap.shares.applied.length;
+  if (!n) return null;
+  return (
+    <button className="share-badge" onClick={onClick} title={snap.shares.applied.map((s) => `${s.path} → ${s.view}`).join('\n')}>
+      共享 {n} 个文件夹 · 读写
+    </button>
+  );
+}
+
 export function Ring({ snap }: { snap: Snapshot }) {
   const { now, run } = useApp();
   return (

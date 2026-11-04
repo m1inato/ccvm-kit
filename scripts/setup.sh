@@ -25,7 +25,7 @@ case "$(vm_status)" in
   Running) ok "VM 已在运行" ;;
   *) limactl start --tty=false "$VM" ;;
 esac
-check_effective_lima_config
+check_effective_lima_config --allow-missing
 [ "$(vm uname -m)" = aarch64 ] || die "VM 架构不是 aarch64"
 ok "VM 就绪：$(vm sh -c '. /etc/os-release; echo $PRETTY_NAME') / $(vm uname -r)"
 
@@ -60,4 +60,8 @@ else
   bash "$KIT/scripts/leaktest.sh"
 fi
 
+if [ -n "$(share_list)" ]; then
+  # 建 VM 时仍然是 --mount-none；共享文件夹要单独应用（会重启 VM），这里不自动执行
+  warn "$STATE/shares.txt 里有共享文件夹，部署时没有挂载。需要时运行：bash scripts/share.sh apply"
+fi
 printf '\n%s部署完成。%s下一步：bash scripts/enter.sh 进入 cc 用户，安装并登录 Claude Code（见 README）。\n' "$G" "$N"

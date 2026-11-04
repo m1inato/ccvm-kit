@@ -201,10 +201,87 @@ check_listener() {
   pass listener.loopback_only "专用入口只监听在回环地址（$(tr '\n' ' ' <<<"$addrs" | sed 's/ $//')）"
 }
 
-# Lima 合并后的实际配置里不能有挂载和额外网卡（防止 _config 之外的途径改了实例配置）
+# ---------------------------------------------------------------- 共享文件夹
+# 唯一来源：$STATE/shares.txt，一行一个 Mac 绝对路径；不存在或为空就是没有共享。
+# 挂载名：路径最后一级目录名，[A-Za-z0-9._-] 以外的字符（按字节）换成 _，重名依次加 -2、-3。
+# VM 里：Lima 的 virtiofs 挂在 /mnt/ccvm-raw/<名字>（父目录 0700 root），cc 看到的是 bindfs 映射的 /home/cc/mac/<名字>。
+SHARE_RAW=/mnt/ccvm-raw
+SHARE_VIEW=/home/cc/mac
+share_list() {
+  [ -f "$STATE/shares.txt" ] || return 0
+  tr -d '\r' < "$STATE/shares.txt" | awk 'length($0) > 0'
+}
+share_names() {
+  local p name n used="" cand
+  while IFS= read -r p; do
+    while [ "${p%/}" != "$p" ] && [ "$p" != / ]; do p="${p%/}"; done
+    name="$(printf '%s' "${p##*/}" | LC_ALL=C sed 's/[^A-Za-z0-9._-]/_/g' | cut -c1-56)"
+    case "$name" in ""|.|..) name=share ;; esac
+    cand="$name"; n=1
+    while printf '%s\n' "$used" | grep -qxF -- "$cand"; do n=$((n + 1)); cand="$name-$n"; done
+    used="$used$cand"$'\n'
+    printf '%s\n' "$cand"
+  done < <(share_list)
+}
+# a 等于 b 或在 b 里面
+path_within() { [ "$1" = "$2" ] || case "$1" in "${2%/}"/*) true ;; *) false ;; esac; }
+real_dir() { (cd "$1" 2>/dev/null && pwd -P); }
+# 可以共享就什么都不输出；不可以就输出一句原因。先求真实路径再判断，符号链接绕不过去。
+share_path_problem() {
+  local p="$1" real home s sreal
+  case "$p" in /*) ;; *) echo "不是绝对路径：$p"; return 0 ;; esac
+  case "$p" in *[[:cntrl:]]*) echo "路径里有控制字符：$p"; return 0 ;; esac
+  [ -e "$p" ] || { echo "不存在：$p"; return 0; }
+  [ -d "$p" ] || { echo "不是文件夹：$p"; return 0; }
+  real="$(real_dir "$p")" || { echo "进不去这个文件夹：$p"; return 0; }
+  home="$(real_dir "$HOME")" || home="$HOME"
+  case "$real" in
+    /|/Users|/Volumes|/System|/Library|/Applications|/private|/etc|/var|/usr|/opt|/tmp|/private/etc|/private/var|/private/tmp)
+      echo "不能共享系统目录：$real"; return 0 ;;
+  esac
+  [ "$real" != "$home" ] || { echo "不能共享整个家目录：$real"; return 0; }
+  case "$real" in "$home"/.*) echo "不能共享家目录下的隐藏目录：$real"; return 0 ;; esac
+  # 敏感位置：不能等于、不能在里面、也不能包含。$STATE、$KIT 也算：否则 VM 能改写出口基线，或改写 Mac 上运行的脚本
+  for s in "$home/Library" "$home/.ssh" "$home/.gnupg" "$home/.aws" "$home/.config" "$home/.kube" "$home/.docker" \
+           "$LIMA_HOME" "$STATE" "$KIT"; do
+    sreal="$(real_dir "$s")" || sreal="${s%/}"
+    if path_within "$real" "$sreal"; then echo "在敏感位置里面：${real}（${sreal}）"; return 0; fi
+    if path_within "$sreal" "$real"; then echo "包含敏感位置 ${sreal}：$real"; return 0; fi
+  done
+  return 0
+}
+
+# Lima 合并后的实际配置：不能有额外网卡；挂载位置的集合必须正好等于 share_list（多一个、少一个都不行），
+# 而且每个允许的路径都要再过一遍 share_path_problem（防止有人手改 shares.txt）。
+# --allow-missing 只给 setup.sh 用：新建的 VM 还没应用共享，缺挂载只提醒（多出来的照样失败）。
 check_effective_lima_config() {
-  local got
-  got="$(limactl list --format '{{len .Config.Mounts}} {{len .Config.Networks}}' "$VM" 2>/dev/null || true)"
-  [ "$got" = "0 0" ] || fail_check lima.effective_config "VM 实际配置里有挂载或额外网络（mounts networks = ${got:-读不到}）。查看 $LIMA_HOME/$VM/lima.yaml。"
-  pass lima.effective_config "VM 实际配置：无挂载、无额外网络"
+  local nets mounts want extra missing p prob n allow_missing=0
+  [ "${1:-}" != --allow-missing ] || allow_missing=1
+  nets="$(limactl list --format '{{len .Config.Networks}}' "$VM" 2>/dev/null || true)"
+  [ "$nets" = 0 ] || fail_check lima.effective_config "VM 实际配置里有额外网络（networks = ${nets:-读不到}）。查看 $LIMA_HOME/$VM/lima.yaml。"
+  mounts="$(limactl list --format '{{range .Config.Mounts}}{{.Location}}{{"\n"}}{{end}}' "$VM" 2>/dev/null)" \
+    || fail_check lima.effective_config "读不到 VM 实际配置里的挂载。查看 $LIMA_HOME/$VM/lima.yaml。"
+  mounts="$(printf '%s\n' "$mounts" | tr -d '\r' | awk 'length($0) > 0' | sed 's#\(.\)/*$#\1#' | LC_ALL=C sort -u)"
+  want="$(share_list | sed 's#\(.\)/*$#\1#' | LC_ALL=C sort -u)"
+  extra="$(LC_ALL=C comm -23 <(printf '%s\n' "$mounts" | awk 'length($0) > 0') <(printf '%s\n' "$want" | awk 'length($0) > 0'))"
+  missing="$(LC_ALL=C comm -13 <(printf '%s\n' "$mounts" | awk 'length($0) > 0') <(printf '%s\n' "$want" | awk 'length($0) > 0'))"
+  [ -z "$extra" ] || fail_check lima.effective_config "VM 实际配置里有没被允许的挂载：$(printf '%s\n' "$extra" | tr '\n' ' ')。允许的共享只来自 $STATE/shares.txt；查看 $LIMA_HOME/$VM/lima.yaml。"
+  if [ -n "$missing" ] && [ "$allow_missing" = 1 ]; then
+    warn "共享文件夹还没有挂进 VM：$(printf '%s\n' "$missing" | tr '\n' ' ')"
+    want="$(LC_ALL=C comm -12 <(printf '%s\n' "$mounts" | awk 'length($0) > 0') <(printf '%s\n' "$want" | awk 'length($0) > 0'))"
+    missing=""
+  fi
+  [ -z "$missing" ] || fail_check lima.effective_config "shares.txt 里的共享文件夹没有挂进 VM：$(printf '%s\n' "$missing" | tr '\n' ' ')。用 share.sh apply（或 App 的「应用并重启 VM」）重新应用。"
+  n=0
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    prob="$(share_path_problem "$p")"
+    [ -z "$prob" ] || fail_check lima.effective_config "挂进 VM 的共享文件夹不允许共享：$prob"
+    n=$((n + 1))
+  done <<<"$want"
+  if [ "$n" -gt 0 ]; then
+    pass lima.effective_config "VM 实际配置：无额外网络，挂载只有允许的 $n 个共享文件夹"
+  else
+    pass lima.effective_config "VM 实际配置：无挂载、无额外网络"
+  fi
 }

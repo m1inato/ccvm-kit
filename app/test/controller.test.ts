@@ -252,3 +252,80 @@ describe('Controller with the built-in egress core', () => {
     expect(mac.loaded).toBe(true);
   });
 });
+
+describe('Controller: shared folders and file transfer', () => {
+  /** 后台任务是脱离的进程：等它们写完退出码再结束测试，免得清理临时目录时还在写 */
+  const settle = (ids: string[]) => waitFor(() => ids.every((id) => fs.existsSync(path.join(f.data, 'jobs', id, 'exit'))));
+
+  function project(): string {
+    const dir = path.join(f.root, 'projects', 'app');
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
+  it('settings cannot change shares through updateSettings', () => {
+    c = make();
+    const s = c.updateSettings({ sharedFolders: ['/Volumes/x'], sharesEnabled: true } as never);
+    expect(s.sharedFolders).toEqual([]);
+    expect(s.sharesEnabled).toBe(false);
+  });
+
+  it('applyShares writes shares.txt, runs share.sh apply, then refreshes and checks again', async () => {
+    c = make();
+    await c.init();
+    await waitFor(() => c.snapshot().lastQuick && !c.snapshot().checking);
+    const dir = project();
+    c.addSharedFolder(dir + '/');
+    c.setSharesEnabled(true);
+    expect(c.snapshot().shares.pendingApply).toBe(true);
+    f.set('mounts', dir + '\n');
+    f.set('shares.out', 'PASS share.guest 已映射 1 个共享文件夹到 /home/cc/mac（读写）\n');
+    const before = c.snapshot().lastQuick!.at;
+    const id = c.applyShares();
+    expect(fs.readFileSync(path.join(f.state, 'shares.txt'), 'utf8')).toBe(dir + '\n');
+    expect(c.snapshot().jobs.find((j) => j.id === id)?.kind).toBe('shares');
+    const job = await waitFor(() => c.snapshot().jobs.find((j) => j.id === id && j.state !== 'running'), 20_000);
+    expect(job.state, job.reason).toBe('done');
+    await waitFor(() => c.snapshot().shares.applied.length === 1 && c.snapshot().lastQuick!.at > before && !c.snapshot().checking, 20_000);
+    const snap = c.snapshot();
+    expect(snap.shares.applied[0]).toEqual({ path: dir, name: 'app', view: '/home/cc/mac/app' });
+    expect(snap.shares.pendingApply).toBe(false);
+    expect(snap.level, `${snap.headline}：${snap.detail}`).toBe('ok'); // 共享开着仍然是绿色
+    expect(JSON.parse(fs.readFileSync(path.join(f.stub, 'edit'), 'utf8').replace(/^\.mounts = /, ''))).toEqual([
+      { location: dir, mountPoint: '/mnt/ccvm-raw/app', writable: true },
+    ]);
+  });
+
+  it('turning shares off writes an empty shares.txt', async () => {
+    c = make();
+    c.addSharedFolder(project());
+    const id = c.applyShares();
+    expect(fs.readFileSync(path.join(f.state, 'shares.txt'), 'utf8')).toBe('');
+    await settle([id]);
+  });
+
+  it('refuses to apply a folder that must not be shared, without touching shares.txt', () => {
+    c = make();
+    c.addSharedFolder(f.root); // 家目录本身
+    c.setSharesEnabled(true);
+    expect(c.snapshot().shares.problems[f.root]).toMatch(/家目录/);
+    expect(() => c.applyShares()).toThrow(/家目录/);
+    expect(fs.existsSync(path.join(f.state, 'shares.txt'))).toBe(false);
+  });
+
+  it('pushPaths and pullFile start background jobs', async () => {
+    c = make();
+    const src = project();
+    const ids = c.pushPaths([src, path.join(f.root, 'projects')], '/home/cc/work');
+    expect(ids).toHaveLength(2);
+    const jobs = c.snapshot().jobs;
+    const push = jobs.find((j) => j.id === ids[0])!;
+    expect(push.kind).toBe('push');
+    expect(push.args).toEqual(['push', src, '/home/cc/work', '--json']);
+    const pull = c.pullFile('/home/cc/work/a.txt', path.join(f.root, 'a.txt'), true);
+    expect(c.snapshot().jobs.find((j) => j.id === pull)?.args).toEqual(['pull', '/home/cc/work/a.txt', path.join(f.root, 'a.txt'), '--force', '--json']);
+    expect(() => c.pushPaths([src], '/etc')).toThrow(/home\/cc/);
+    expect(() => c.pullFile('/home/cc/../etc/passwd', path.join(f.root, 'p'), false)).toThrow();
+    await settle([...ids, pull]);
+  });
+});

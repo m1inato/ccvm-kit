@@ -1,5 +1,5 @@
 // 沙盒预加载：只暴露这几个入口。界面拿不到 Node、文件系统或 shell。
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron';
 
 contextBridge.exposeInMainWorld('ccvm', {
   snapshot: () => ipcRenderer.invoke('ccvm:snapshot'),
@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld('ccvm', {
       return () => ipcRenderer.removeListener('ccvm:term:exit', listener);
     },
   },
+  /** 从 Finder 拖进来的文件 → Mac 上的路径（主进程上传前会再校验） */
+  pathsForFiles: (files: File[]) => Array.from(files, (f) => webUtils.getPathForFile(f)).filter((p) => !!p),
   /** 胶囊页面报告内容大小，主进程据此调整窗口（只认胶囊窗口发来的） */
   capsuleSize: (width: number, height: number) => ipcRenderer.send('ccvm:capsule:size', width, height),
   onNavigate: (cb: (route: string) => void) => {

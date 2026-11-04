@@ -287,3 +287,22 @@ select.input { padding-right: 6px; }
 .xterm-host { position: absolute; inset: 6px 4px 4px 8px; }
 .term-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); text-align: center; padding: 20px; }
 .center.with-term { padding: 14px 16px; }
+
+/* ---------------------------------------------------------------- 共享文件夹与文件 */
+.share-badge {
+  display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 12px; font-size: 11.5px; cursor: pointer;
+  border: 1px solid rgba(210, 153, 34, 0.45); background: var(--warn-soft); color: var(--warn); -webkit-app-region: no-drag;
+}
+.crumbs { display: flex; flex-wrap: wrap; gap: 2px; font-family: var(--mono); font-size: 12px; margin-top: 4px; }
+.crumbs span { display: inline-flex; gap: 2px; }
+.files { display: flex; flex-direction: column; gap: 12px; }
+.files.dragging { outline: 2px dashed var(--accent); outline-offset: -8px; }
+.file-list { overflow: hidden; }
+.file-row { display: flex; align-items: center; gap: 10px; padding: 6px 12px; border-bottom: 1px solid var(--border); cursor: default; user-select: none; }
+.file-row:last-child { border-bottom: 0; }
+.file-row:hover { background: var(--panel-2); }
+.file-row.selected { background: var(--accent-soft); }
+.file-row .icon { width: 14px; text-align: center; color: var(--muted); }
+.file-row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-row .size { width: 80px; text-align: right; }
+.file-row .when { width: 120px; text-align: right; }

@@ -26,19 +26,28 @@ case "$1" in
   list)
     case "$*" in
       *"{{.Status}}"*) printf '%s\n' "${STUB_VM_STATUS-Running}" ;;
-      *"Config.Mounts"*) echo "0 0" ;;
+      *".Location"*) printf '%s' "${STUB_MOUNTS-}" ;;
+      *"{{len .Config.Networks}}"*) echo "${STUB_NETWORKS-0}" ;;
       *"{{.CPUs}}"*) echo "4 6442450944 64424509440" ;;
     esac ;;
+  edit)
+    [ -z "${STUB_EDIT_FILE-}" ] || printf '%s' "$4" > "$STUB_EDIT_FILE"
+    exit "${STUB_EDIT_RC:-0}" ;;
   shell)
     case "$*" in
       *"tmux list-sessions"*)
         [ -n "${STUB_TMUX_SESSIONS+x}" ] || { echo "no server running" >&2; exit 1; }
         printf '%s' "$STUB_TMUX_SESSIONS"; exit 0 ;;
+      *"tar --no-same-owner -xf - -C "*)
+        mkdir -p "$STUB_UNPACK" && exec tar -xf - -C "$STUB_UNPACK" ;;
+      *"sudo -u cc -H cat -- "*)
+        printf '%s' "${STUB_CAT-}"; exit "${STUB_CAT_RC:-0}" ;;
     esac
     body="$(cat)"
     case "$body" in
       *"VM 内以 cc 身份运行"*) out="$STUB_WORKSPACE_OUT"; rc="${STUB_WORKSPACE_RC:-0}" ;;
       *"断流 / 抓包"*|*"会短暂停止 TUN"*) out="$STUB_LEAK_OUT"; rc="${STUB_LEAK_RC:-0}" ;;
+      *"ccvm-shares.service"*) out="${STUB_SHARES_OUT-}"; rc="${STUB_SHARES_RC:-0}" ;;
       *) out="$STUB_SELFCHECK_OUT"; rc="${STUB_SELFCHECK_RC:-0}" ;;
     esac
     [ -n "$out" ] && cat "$out"
@@ -49,7 +58,8 @@ esac
 '''
 
 
-class EventTests(unittest.TestCase):
+class ScriptHarness(unittest.TestCase):
+    """Real host scripts driven with stub limactl / curl / netstat / uname. No tests of its own."""
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="ccvm-events-")
         self.addCleanup(self.temp.cleanup)
@@ -108,6 +118,8 @@ class EventTests(unittest.TestCase):
     def values(self, events):
         return {e["key"]: e["value"] for e in events if e["type"] == "value"}
 
+
+class EventTests(ScriptHarness):
     # ------------------------------------------------------------------ check.sh
     def test_check_json_happy_path(self):
         result = self.run_script("check.sh", "--quick", "--json")

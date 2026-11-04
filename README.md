@@ -13,7 +13,7 @@ Mac 的 127.0.0.1:17897 → CC-VM-FIXED → 你指定的具体节点
 ```
 
 - Ubuntu 24.04 ARM64，默认 4 vCPU / 6 GiB 内存 / 60 GiB 稀疏磁盘。
-- 工作用户 `cc` 无 sudo；不挂载 Mac 目录，不转发应用端口或 SSH agent。
+- 工作用户 `cc` 无 sudo；默认不挂载 Mac 目录（只在你明确开启后，经 `limactl edit` 读写共享选定文件夹，见 [共享文件夹](docs/desktop-app.md#设计降级共享文件夹读写)），不转发应用端口或 SSH agent。
 - 公网 TCP 经过代理，DNS 经代理做 DoH；普通 UDP、IPv6 和局域网访问被阻断。
 - Mac 日常 Clash 规则、系统代理与 TUN 开关由用户原有配置管理。
 - 固定节点可能有多个出口 IP；出口与基线不一致时，检查和日常入口会拒绝通过。
@@ -122,6 +122,8 @@ Ubuntu 默认的 `~/.profile` 会在下次登录时加入已存在的 `~/.local/
 | 确认新出口后更新基线 | `bash scripts/rebaseline.sh` |
 | 启停 VM（先检查 Lima 配置） | `bash scripts/vm.sh start` / `stop` |
 | VM 里的项目 | `bash scripts/workspace.sh list` |
+| 共享文件夹（读写，会重启 VM） | 编辑 `state/shares.txt` 后 `bash scripts/share.sh apply`；查看 `bash scripts/share.sh status` |
+| 浏览 / 传文件（以 cc 身份） | `bash scripts/files.sh list ~/work`（VM 路径）、`push <Mac路径> <VM目录>`、`pull <VM文件> <Mac文件>` |
 
 以上脚本都可以加 `--json`，输出给程序读的事件（格式见 [事件输出](docs/events.md)）。
 

@@ -19,6 +19,10 @@
 - VS Code 远程这一轮不做：它在 VM 和 Mac 之间打开的通道不止端口转发，见 `docs/desktop-app.md`。
 - `enter.sh --project P --session auto`：检查通过后按 App 的规则自动取会话名（`<项目>-<第一个空闲序号>`）。
 - 桌面端：命令行入口 `ccvm`（设置 → 通用里安装到 `~/.local/bin/ccvm`，设置变了自动重写）；`.command` 文件改为只调用它；「用哪个终端打开 cc」增加 Ghostty（AppleScript，需要 1.3.0 或更新）。
+- 共享文件夹（读写，**有意的设计降级**，默认关闭）：`$STATE/shares.txt` 是唯一来源；新增 `share.sh status|apply`（`limactl edit` 写挂载、重启 VM）与 VM 内 `guest/shares.sh`（bindfs 把 `/mnt/ccvm-raw/<名字>` 映射到 `/home/cc/mac/<名字>`）。`lima.effective_config` 改为要求挂载集合正好等于 `shares.txt`；`vm.no_host_mounts` 改为「没有未经允许的宿主目录挂载」，`check.sh` 完整验收把共享名传给 VM。禁止共享家目录、敏感目录和 CCVM 自己的目录。说明见 `docs/desktop-app.md`。
+- 传文件：新增 `files.sh list|mkdir|rm|push|pull`（以 cc 身份，只能碰 `/home/cc`，下载只支持单个普通文件）。
+- 桌面端：设置新增「共享文件夹」分页，顶栏 / 胶囊 / 链路面板 / 验收记录常驻「共享 N 个文件夹 · 读写」；新增「文件」页（浏览、上传、拖入、新建、删除、下载）。
+- 桌面端修复：`refreshVm` 在拿到登录 shell 的 PATH 之前不再运行，较早发起的结果也不会覆盖较新的（原来会偶发地把 VM 错报成「找不到 limactl」）。
 - 桌面胶囊修复：窗口跟内容一样大（原来 480×170 的透明窗口会挡住下面窗口的点击）；按钮第一下就能点（`acceptFirstMouse`）；打开胶囊不再隐藏 Dock 图标；显示器变化后拉回屏幕内；胶囊里的操作失败时显示原因。
 
 - 打包不再生成校验文件；桌面端判断节点是否变化改为逐字段比较内容。项目不使用这类哈希，规则见 `AGENTS.md`。

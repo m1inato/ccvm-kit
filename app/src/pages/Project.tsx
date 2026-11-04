@@ -57,6 +57,9 @@ export function ProjectPage({ name }: { name: string }) {
         <button className="btn sm" disabled={blocked || !running} onClick={() => run(() => act('openTerminal', name))} title="用外部终端（Terminal / iTerm / Ghostty）新建一个 tmux 会话，和内嵌终端开的一样出现在下面的列表里">
           外部终端
         </button>
+        <button className="btn sm" disabled={!running} onClick={() => go(`/files/${encodeURIComponent(`/home/cc/work/${name}`)}`)} title="浏览、上传、下载这个项目里的文件">
+          文件
+        </button>
         <button className="btn sm ghost" onClick={() => setPanel(!panel)} title="收起 / 展开右侧面板">
           {panel ? '收起面板 ›' : '‹ 面板'}
         </button>

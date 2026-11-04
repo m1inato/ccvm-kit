@@ -1,7 +1,7 @@
 // 解析脚本的 NDJSON 事件，并按 docs/events.md 给出结论。
 // 原则：不确定就当失败。读不懂的行、缺少 end、退出码非 0、任何失败项，都不是「通过」。
 import { StringDecoder } from 'node:string_decoder';
-import type { CheckEvent, ClaudeEvent, ProjectItem, RunResult, ScriptEvent, SessionItem } from './types';
+import type { CheckEvent, ClaudeEvent, FileItem, ProjectItem, RunResult, ScriptEvent, SessionItem, ShareItem } from './types';
 
 const ID = /^[a-z0-9_.]+$/;
 const isStr = (v: unknown): v is string => typeof v === 'string';
@@ -42,6 +42,18 @@ export function parseEventLine(line: string): ScriptEvent | null {
           v: 1, type: 'item', kind: 'claude_event', t: isNum(e.t) ? e.t : 0, event: e.event,
           project: isStr(e.project) ? e.project : '', notification: isStr(e.notification) ? e.notification : '', message: isStr(e.message) ? e.message.slice(0, 160) : '',
         };
+      }
+      if (e.kind === 'share') {
+        if (!isStr(e.path) || !isStr(e.name) || !/^[A-Za-z0-9._-]{1,64}$/.test(e.name)) return null;
+        return {
+          v: 1, type: 'item', kind: 'share', path: e.path, name: e.name, mount_point: isStr(e.mount_point) ? e.mount_point : '',
+          view: isStr(e.view) ? e.view : '', problem: isStr(e.problem) ? e.problem : '',
+        };
+      }
+      if (e.kind === 'file') {
+        if (!isStr(e.name) || !e.name || e.name.includes('/')) return null;
+        const t = e.file_type === 'file' || e.file_type === 'dir' || e.file_type === 'link' ? e.file_type : 'other';
+        return { v: 1, type: 'item', kind: 'file', name: e.name, file_type: t, size: isNum(e.size) ? e.size : 0, mtime: isNum(e.mtime) ? e.mtime : 0 };
       }
       if (e.kind !== 'project' || !isStr(e.name)) return null;
       const item: ProjectItem = {
@@ -130,6 +142,8 @@ export function summarize(
   const items: ProjectItem[] = [];
   const sessions: SessionItem[] = [];
   const claudeEvents: ClaudeEvent[] = [];
+  const shares: ShareItem[] = [];
+  const files: FileItem[] = [];
   const steps: { id: string; msg: string }[] = [];
   const errors: string[] = [];
   const logs: { level: string; msg: string }[] = [];
@@ -153,6 +167,12 @@ export function summarize(
         } else if (e.kind === 'claude_event') {
           const { v: _v, type: _t, kind: _k, ...c } = e;
           claudeEvents.push(c);
+        } else if (e.kind === 'share') {
+          const { v: _v, type: _t, kind: _k, ...sh } = e;
+          shares.push(sh);
+        } else if (e.kind === 'file') {
+          const { v: _v, type: _t, kind: _k, ...f } = e;
+          files.push(f);
         } else {
           const { v: _v, type: _t, kind: _k, ...item } = e;
           items.push(item);
@@ -203,6 +223,8 @@ export function summarize(
     items,
     sessions,
     claudeEvents,
+    shares,
+    files,
     steps,
     errors,
     logs,
