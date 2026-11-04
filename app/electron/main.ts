@@ -107,6 +107,20 @@ function openMain(route?: string): void {
   mainWin.focus();
 }
 
+// 胶囊窗口只和内容一样大：透明窗口的空白部分在 macOS 上也会挡住下面窗口的点击。
+// 胶囊页面量好自己的大小发过来；窗口以右上角为锚点伸缩（拖动过也一样），并且始终留在屏幕内。
+const CAPSULE_MAX = { width: 720, height: 420 };
+
+function placeCapsule(width: number, height: number): void {
+  if (!capsuleWin || capsuleWin.isDestroyed()) return;
+  const b = capsuleWin.getBounds();
+  const right = b.x + b.width;
+  const area = screen.getDisplayMatching(b).workArea;
+  const x = Math.min(Math.max(right - width, area.x), area.x + area.width - width);
+  const y = Math.min(Math.max(b.y, area.y), area.y + area.height - height);
+  capsuleWin.setBounds({ x: Math.round(x), y: Math.round(y), width, height });
+}
+
 function syncCapsule(snap: Snapshot): void {
   if (!snap.settings.showCapsule) {
     capsuleWin?.close();
@@ -118,7 +132,7 @@ function syncCapsule(snap: Snapshot): void {
   const area = screen.getPrimaryDisplay().workArea;
   capsuleWin = new BrowserWindow({
     width,
-    height: 170,
+    height: 48,
     x: area.x + area.width - width - 12,
     y: area.y + 8,
     frame: false,
@@ -132,16 +146,27 @@ function syncCapsule(snap: Snapshot): void {
     hasShadow: false,
     alwaysOnTop: true,
     focusable: false,
+    // 胶囊永远不会成为活动窗口；不开这个，macOS 会把第一下点击吞掉用来「激活」，按钮点不动
+    acceptFirstMouse: true,
     show: false,
     webPreferences,
   });
   capsuleWin.setAlwaysOnTop(true, 'floating');
-  capsuleWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  // skipTransformProcessType：否则 Electron 会顺手隐藏 Dock 图标（主窗口开着时打开胶囊，Dock 图标和菜单就没了）。
+  // Dock 由 openMain / 关主窗口自己管。
+  capsuleWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
   load(capsuleWin, '/capsule');
   capsuleWin.once('ready-to-show', () => capsuleWin?.showInactive());
   capsuleWin.on('closed', () => {
     capsuleWin = null;
   });
+}
+
+/** 显示器拔掉或分辨率变了：把胶囊拉回屏幕内 */
+function keepCapsuleOnScreen(): void {
+  if (!capsuleWin || capsuleWin.isDestroyed()) return;
+  const b = capsuleWin.getBounds();
+  placeCapsule(b.width, b.height);
 }
 
 // ---------------------------------------------------------------- 菜单栏
@@ -335,7 +360,7 @@ async function dispatch(name: string, args: unknown[]): Promise<unknown> {
       return res.filePath;
     }
     case 'openMain':
-      openMain(args[0] === undefined ? undefined : str(args[0], 'route'));
+      openMain(args[0] === undefined || args[0] === null ? undefined : str(args[0], 'route'));
       return;
     case 'openExternal': {
       const url = new URL(str(args[0], 'url'));
@@ -564,6 +589,13 @@ void app.whenReady().then(async () => {
   ipcMain.handle('ccvm:term:close', (e, id: unknown) => {
     if (fromOwnPage(e)) terminals.close(e.sender, String(id));
   });
+  ipcMain.on('ccvm:capsule:size', (e, w: unknown, h: unknown) => {
+    if (!fromOwnPageEvent(e) || !capsuleWin || e.sender !== capsuleWin.webContents) return;
+    if (typeof w !== 'number' || typeof h !== 'number' || !Number.isFinite(w) || !Number.isFinite(h)) return;
+    placeCapsule(Math.min(CAPSULE_MAX.width, Math.max(60, Math.ceil(w))), Math.min(CAPSULE_MAX.height, Math.max(30, Math.ceil(h))));
+  });
+  screen.on('display-removed', keepCapsuleOnScreen);
+  screen.on('display-metrics-changed', keepCapsuleOnScreen);
 
   controller.on('snapshot', (snap: Snapshot) => {
     updateTray(snap);
