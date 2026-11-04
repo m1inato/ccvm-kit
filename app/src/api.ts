@@ -19,6 +19,7 @@ export interface Bridge {
   onSnapshot(cb: (s: Snapshot) => void): () => void;
   onNavigate(cb: (route: string) => void): () => void;
   capsuleSize?(width: number, height: number): void;
+  pathsForFiles?(files: File[]): string[];
 }
 
 declare global {

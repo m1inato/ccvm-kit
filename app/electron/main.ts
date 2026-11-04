@@ -26,6 +26,7 @@ import { fetchSubscription } from '../core/fetch';
 import { runCommand } from '../core/runner';
 import { LOGIN_PATH_COMMAND, parseLoginPath } from '../core/env';
 import { isIPv4, PROJECT_NAME } from '../core/parsers';
+import { isMacPath } from '../core/vmpath';
 import { reportMarkdown } from '../core/report';
 import { relativeTime } from '../core/status';
 import type { CliStatus, EgressMode, Settings, Snapshot } from '../core/types';
@@ -326,6 +327,45 @@ async function openInTerminal(project?: string): Promise<void> {
   else openCommandFile(path.join(app.getPath('userData'), 'run'), project ? `cc-${project}.command` : 'cc.command', ccCommandFile(ccvm, project), term);
 }
 
+// ---------------------------------------------------------------- 共享文件夹与传文件
+function strList(v: unknown, name: string): string[] {
+  if (!Array.isArray(v) || v.length === 0 || v.length > 200) throw new Error(`参数 ${name} 应为非空的字符串列表`);
+  return v.map((x, i) => str(x, `${name}[${i}]`));
+}
+
+/** 上传前再校验一遍 Mac 路径：绝对路径、存在、顶层不是符号链接、是普通文件或文件夹 */
+function checkUploadPath(p: string): string {
+  if (!path.isAbsolute(p) || /[\n\r\0]/.test(p)) throw new Error(`不是有效的绝对路径：${p}`);
+  let st: fs.Stats;
+  try {
+    st = fs.lstatSync(p);
+  } catch {
+    throw new Error(`不存在：${p}`);
+  }
+  if (st.isSymbolicLink()) throw new Error(`不上传符号链接本身：${p}`);
+  if (!st.isFile() && !st.isDirectory()) throw new Error(`只能上传普通文件或文件夹：${p}`);
+  return p;
+}
+
+async function confirmApplyShares(): Promise<boolean> {
+  const snap = controller.snapshot();
+  const s = snap.settings;
+  const folders = s.sharesEnabled ? s.sharedFolders : [];
+  const sessions = snap.sessions.length;
+  const detail = [
+    `会重启 VM：正在运行的 ${sessions} 个 tmux 会话（包括里面的 Claude）会被中断。完成后会自动检查一遍。`,
+    '',
+    folders.length
+      ? '共享是读写的：VM 里的程序（包括 Claude）可以修改这些文件夹里的任何文件，包括脚本、.git/hooks、package.json 里的 scripts。之后在 Mac 上运行它们，就等于以你的权限执行。这些内容也可以经固定出口发出去。'
+      : '这次会移除所有共享：VM 里不再有 Mac 的文件夹。',
+    '',
+    folders.length ? `要共享的文件夹（VM 里在 /home/cc/mac/ 下）：\n${folders.map((f) => `• ${f}`).join('\n')}` : '',
+    '',
+    '网络隔离不变：VM 仍然只能经选定节点出网，也连不到 Mac 的网络服务。',
+  ].join('\n');
+  return confirm(folders.length ? `共享 ${folders.length} 个文件夹给 VM（读写）并重启 VM？` : '关闭共享文件夹并重启 VM？', detail.trim(), '应用并重启 VM');
+}
+
 async function dispatch(name: string, args: unknown[]): Promise<unknown> {
   switch (name) {
     case 'quickCheck':
@@ -483,6 +523,64 @@ async function dispatch(name: string, args: unknown[]): Promise<unknown> {
       const on = args[0] === true;
       if (on && !(await confirm('开启「Claude 做完了」提醒？', '会在 VM 里写两个 root 所有的文件：/usr/local/lib/ccvm/claude-hook 和 /etc/claude-code/managed-settings.d/50-ccvm.json。hook 只记录事件类型、时间、工作目录和截断的通知文字，不记录对话内容，永远不影响 Claude 的行为。新开的 Claude 会话生效。', '开启', 'question'))) return controller.settings;
       return controller.setHooks(on);
+    }
+    case 'addSharedFolder': {
+      const opts: Electron.OpenDialogOptions = {
+        title: '选择要共享给 VM 的文件夹',
+        message: '选具体的项目文件夹。VM 可以读写里面的所有文件。',
+        properties: ['openDirectory', 'createDirectory'],
+      };
+      const res = mainWin ? await dialog.showOpenDialog(mainWin, opts) : await dialog.showOpenDialog(opts);
+      if (res.canceled || !res.filePaths[0]) return null;
+      return controller.addSharedFolder(res.filePaths[0]);
+    }
+    case 'removeSharedFolder':
+      return controller.removeSharedFolder(str(args[0], 'path'));
+    case 'setSharesEnabled':
+      if (typeof args[0] !== 'boolean') throw new Error('参数 on 应为 true / false');
+      return controller.setSharesEnabled(args[0]);
+    case 'applyShares':
+      if (!(await confirmApplyShares())) return null;
+      return controller.applyShares();
+    case 'listFiles':
+      return controller.listFiles(str(args[0], 'path'));
+    case 'makeDir':
+      return controller.makeDir(str(args[0], 'path'));
+    case 'removePath': {
+      const p = str(args[0], 'path');
+      const mac = isMacPath(p);
+      const ok = await confirm(
+        mac ? `删除 Mac 上的「${path.posix.basename(p)}」？` : `删除「${path.posix.basename(p)}」？`,
+        mac
+          ? `这是 Mac 上的真实文件：${p} 在共享文件夹里，删掉的是你 Mac 上的文件，不会进废纸篓，不能恢复。`
+          : `${p}\n\n会连同里面的所有内容一起删除，不能恢复。`,
+        '删除',
+      );
+      if (!ok) return false;
+      return controller.removePath(p);
+    }
+    case 'pushPaths': {
+      const paths = strList(args[0], 'paths').map(checkUploadPath);
+      return controller.pushPaths(paths, str(args[1], 'destDir'));
+    }
+    case 'chooseUpload': {
+      const dest = str(args[0], 'destDir');
+      const folders = args[1] === true;
+      const opts: Electron.OpenDialogOptions = {
+        title: folders ? '选择要上传到 VM 的文件夹' : '选择要上传到 VM 的文件',
+        properties: folders ? ['openDirectory', 'multiSelections'] : ['openFile', 'multiSelections'],
+      };
+      const res = mainWin ? await dialog.showOpenDialog(mainWin, opts) : await dialog.showOpenDialog(opts);
+      if (res.canceled || !res.filePaths.length) return [];
+      return controller.pushPaths(res.filePaths.map(checkUploadPath), dest);
+    }
+    case 'pullFile': {
+      const src = str(args[0], 'vmPath');
+      const opts: Electron.SaveDialogOptions = { title: '下载到 Mac', defaultPath: path.join(app.getPath('downloads'), path.posix.basename(src)) };
+      const res = mainWin ? await dialog.showSaveDialog(mainWin, opts) : await dialog.showSaveDialog(opts);
+      if (res.canceled || !res.filePath) return null;
+      // 已存在时系统保存对话框已经问过要不要替换
+      return controller.pullFile(src, res.filePath, fs.existsSync(res.filePath));
     }
     case 'setMatrix':
       return controller.setMatrix(str(args[0], 'id'), args[1] === true);

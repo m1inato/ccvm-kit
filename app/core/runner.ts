@@ -26,6 +26,8 @@ export const SCRIPTS = new Set([
   'hooks.sh',
   'vm.sh',
   'workspace.sh',
+  'share.sh',
+  'files.sh',
 ]);
 
 export function scriptPath(kitDir: string, script: string): string {

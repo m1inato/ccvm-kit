@@ -28,7 +28,7 @@ bash scripts/check.sh --quick --json
 | `step` | `id`、`msg` | 多步骤任务进入下一步（如 `setup.vm`） |
 | `check` | `id`、`ok`、`msg` | 一项检查的结论。`id` 稳定，`msg` 是给人看的原话 |
 | `value` | `key`、`value` | 测得的值，例如出口 IP；值总是字符串 |
-| `item` | `kind` 及其字段 | 列表项，目前只有 `kind: "project"` |
+| `item` | `kind` 及其字段 | 列表项：`project`、`session`、`claude_event`、`share`、`file`（见文末） |
 | `log` | `level`（`info` / `warn` / `detail`）、`msg` | 过程信息 |
 | `error` | `msg` | 脚本因错误终止前的最后一句话 |
 | `end` | `ok`、`code` | 最后一条事件 |
@@ -47,7 +47,11 @@ bash scripts/check.sh --quick --json
 | `vm.sh start\|stop\|status [--json]` | 启停 VM；每次都先检查 Lima 全局配置，启动后核对实际配置 |
 | `workspace.sh list\|claude\|clone URL\|kill-session 会话名 [--json]` | VM 里 `~/work` 的项目与 tmux 会话、Claude Code 是否已安装、以 cc 身份克隆、结束会话 |
 | `hooks.sh enable\|disable\|status [--json]` | 「Claude 做完了」字幕用的 hook：装在 VM 里 root 所有的 managed-settings 目录里，cc 改不了 |
-| `enter.sh [--project 名称] [--session 会话名] \| --attach 会话名` | 交互入口（没有 JSON 模式）。`--session` 检查后新建或接入 tmux 会话；`--attach` 只接入已有会话，不做检查 |
+| `enter.sh [--project 名称] [--session 会话名\|auto] \| --attach 会话名` | 交互入口（没有 JSON 模式）。`--session` 检查后新建或接入 tmux 会话，`auto` 按 `<项目>-<第一个空闲序号>` 取名；`--attach` 只接入已有会话，不做检查 |
+| `share.sh status\|apply [--json]` | 共享文件夹（读写）。`status` 列出 `$STATE/shares.txt` 里的共享并逐个检查路径，不碰 VM；`apply` 检查路径 → 停 VM → `limactl edit --set '.mounts = [...]'` → 启动并核对实际配置 → 在 VM 里设置 bindfs 映射。步骤为 `share.check` → `share.stop` → `share.edit` → `share.start` → `share.guest` |
+| `files.sh list\|mkdir\|rm <VM路径> [--json]` | 浏览 VM 里 cc 的家目录；只能碰 `/home/cc` 下面，不能删 `/home/cc`、`/home/cc/mac`、`/home/cc/mac/<名字>` |
+| `files.sh push <Mac源路径> <VM目标目录> [--json]` | 上传普通文件或文件夹（顶层不能是符号链接），`tar` 管道以 cc 身份解包 |
+| `files.sh pull <VM文件> <Mac目标文件> [--force] [--json]` | 只下载单个普通文件，不跟符号链接、不支持目录；Mac 上目标已存在时要 `--force` |
 
 ## 检查项 id
 
@@ -60,7 +64,7 @@ id 是 App 与脚本之间的接口。可以改说明文字，改 id 要同时�
 | `host.macos_arm64` | 在 Apple Silicon Mac 的原生 arm64 终端里运行 |
 | `lima.version` | 已安装 Lima，且版本 ≥ 2.1.0 |
 | `lima.no_global_config` | 专用 `LIMA_HOME/_config/` 里没有 `default.yaml`、`override.yaml` |
-| `lima.effective_config` | VM 实际配置里挂载数和网络数都是 0 |
+| `lima.effective_config` | VM 实际配置里额外网络数是 0；挂载位置的集合正好等于 `$STATE/shares.txt`（多一个、少一个都失败，原因里列出路径），而且每个共享路径都能通过 `share_path_problem`。没有共享时就是「无挂载、无额外网络」 |
 | `listener.loopback_only` | :17897 的每个监听地址都是 `127.0.0.1` / `::1`；看不到监听也算失败 |
 | `egress.host_reachable` | 经专用入口能拿到 IPv4 出口 |
 | `egress.host_matches_baseline` | Mac 专用入口的出口 = 基线 |
@@ -82,7 +86,7 @@ id 是 App 与脚本之间的接口。可以改说明文字，改 id 要同时�
 | `vm.nftables_masked` | 通用 `nftables.service` 已屏蔽 | |
 | `vm.resolv_static` | `/etc/resolv.conf` 是静态文件，指向 172.31.255.2 | |
 | `vm.ipv6_off` | IPv6 已关闭 | |
-| `vm.no_host_mounts` | 没有 virtiofs / 9p / sshfs 挂载 | |
+| `vm.no_host_mounts` | 没有**未经允许**的宿主目录挂载：virtiofs / 9p / sshfs / bindfs 挂载只允许 `/mnt/ccvm-raw/<名字>`（virtiofs）和 `/home/cc/mac/<名字>`（bindfs），名字来自 `check.sh` 传入的共享名；其他任何一个都失败并列出。允许的挂载缺了不算这项失败（由 `share.sh` / `shares.sh verify` 报告） | |
 | `cc.no_priv_groups` | cc 不在 sudo、admin、adm、lxd、docker 组 | |
 | `cc.no_sudo` | cc 没有免密 sudo | |
 | `cc.no_proxy_env` | cc 的登录环境里没有代理变量 | |
@@ -121,6 +125,25 @@ id 是 App 与脚本之间的接口。可以改说明文字，改 id 要同时�
 | `claude.installed` | cc 的 `~/.local/bin/claude` 存在且 `--version` 能运行 |
 | `session.kill` | 结束了 cc 的一个 tmux 会话（会话名只允许 `[A-Za-z0-9_-]`，最长 64） |
 
+### 共享文件夹（`scripts/share.sh`、`guest/shares.sh`，可选）
+
+| id | 含义 |
+|---|---|
+| `share.paths` | 共享路径可以共享：绝对路径、存在、是文件夹；按真实路径判断，不是 `/`、`/Users`、`/Volumes` 等系统目录，不是家目录本身或家目录下的隐藏目录，不等于、不在里面、也不包含 `~/Library`、`~/.ssh`、`~/.gnupg`、`~/.aws`、`~/.config`、`~/.kube`、`~/.docker`、Lima 目录、状态目录和套件目录。`apply` 时有一个不通过就停止，不改动 VM |
+| `share.lima_mounts` | `limactl edit` 已把挂载列表写进 Lima 实例配置 |
+| `share.guest` | VM 里 `/home/cc/mac/<名字>` 都已经用 bindfs 挂上（`apply` / `verify`），或者映射已移除（`remove`） |
+
+### 传文件（`scripts/files.sh`、`guest/files.sh`，以 cc 身份运行）
+
+| id | 含义 |
+|---|---|
+| `files.path` | VM 路径是 `/home/cc` 或以 `/home/cc/` 开头，没有 `..` 段和换行（宿主端先查，不通过就不连 VM）；VM 内按真实路径（解开符号链接后）再查一遍 |
+| `files.list` | 列出了一个文件夹 |
+| `files.mkdir` | 新建了文件夹 |
+| `files.rm` | 删除了文件或文件夹（删符号链接时删的是链接本身） |
+| `files.push` | 目标是 cc 家目录下可写的文件夹；上传完成 |
+| `files.pull` | 源是普通文件、不是符号链接；下载完成（先写到同目录的临时文件，成功后再改名） |
+
 ### 完成提醒 hook（`guest/hooks.sh`，可选）
 
 | id | 含义 |
@@ -146,6 +169,9 @@ id 是 App 与脚本之间的接口。可以改说明文字，改 id 要同时�
 | `hooks_enabled` | 完成提醒 hook 是否已安装（`1` / `0`） |
 | `events_size` | `~/.ccvm/events.jsonl` 读到的位置（字节），下次从这里接着读 |
 | `claude_installed` / `claude_version` | `1` 或 `0` / 版本字符串 |
+| `share_count` | `shares.txt` 里的共享文件夹数 |
+| `path` | `files.sh list` 列出的文件夹的真实路径 |
+| `truncated` | `files.sh list` 条目太多时只列出的条数 |
 
 ## 项目列表项
 
@@ -172,3 +198,21 @@ id 是 App 与脚本之间的接口。可以改说明文字，改 id 要同时�
 `project` 由会话的起始目录推出（`~/work/<项目>`），不在项目里的会话为空字符串。
 
 `remote` 已去掉地址里的账号和令牌。`claude_sessions` 是工作目录在该项目下的 Claude Code 进程数，由 VM 内的 `/proc` 判断，不读 `~/.claude`。
+
+## 共享文件夹与文件列表项
+
+`share.sh status --json` 为 `shares.txt` 里的每个共享输出一条（`problem` 为空表示可以共享）：
+
+```json
+{"v":1,"type":"item","kind":"share","path":"/Volumes/Work/my-api","name":"my-api","mount_point":"/mnt/ccvm-raw/my-api","view":"/home/cc/mac/my-api","problem":""}
+```
+
+名字取路径最后一级目录名，`[A-Za-z0-9._-]` 以外的字符（按字节）换成 `_`，重名依次加 `-2`、`-3`。这个规则只在 `scripts/lib.sh` 的 `share_names` 里实现，App 显示名字时读这里的输出。
+
+`files.sh list --json` 为文件夹里的每个条目输出一条，目录在前：
+
+```json
+{"v":1,"type":"item","kind":"file","name":"README.md","file_type":"file","size":1234,"mtime":1793000000}
+```
+
+`file_type` 是 `file`、`dir`、`link`、`other` 之一（不叫 `type`：每条事件的 `type` 已经是 `item`）；名字里的 `\x1f`、`\r`、`\n` 已去掉。

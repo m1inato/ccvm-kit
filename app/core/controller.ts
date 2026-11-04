@@ -10,6 +10,8 @@ import type { CoreManager } from './egress';
 import { isIPv4, gitUrlProblem, parseLimaList, renderClashScript, toProject } from './parsers';
 import { MATRIX } from './report';
 import { runCommand, runScript } from './runner';
+import { shareLines, sharePathProblem, sharesFileContent } from './shares';
+import { vmPathProblem } from './vmpath';
 import { TERMINAL_APPS } from './types';
 import { AlertTracker, deriveLevel, issuesFromCheck, issuesFromCore, issuesFromLeak, newestCheck, Throttle } from './status';
 import type {
@@ -18,6 +20,7 @@ import type {
   ClaudeEvent,
   CoreStatus,
   EgressMode,
+  FileListing,
   Issue,
   JobKind,
   JobSummary,
@@ -26,6 +29,8 @@ import type {
   RunResult,
   SessionItem,
   Settings,
+  SharesState,
+  ShareItem,
   Snapshot,
   VmInfo,
 } from './types';
@@ -59,6 +64,8 @@ interface Persisted {
   eventsOffset?: number;
   /** 出口路径变了（换节点、重启或移除核心、切换出网方式）：在这之前的检查结论不再用来判断状态 */
   checksInvalidBefore?: number;
+  /** 最近一次 share.sh status 列出的共享 */
+  shares?: ShareItem[];
 }
 
 export function defaultSettings(home: string, dataDir: string): Settings {
@@ -76,13 +83,15 @@ export function defaultSettings(home: string, dataDir: string): Settings {
     claudeLoginConfirmed: false,
     welcomeDone: false,
     hooksEnabled: false,
+    sharedFolders: [],
+    sharesEnabled: false,
   };
 }
 
 const QUICK_TIMEOUT = 120_000;
 const SHORT_TIMEOUT = 90_000;
 /** 这些任务运行时不做快速检查，也不开始别的独占任务（断流测试会停掉 TUN） */
-const EXCLUSIVE: JobKind[] = ['setup', 'leaktest', 'vm-start', 'vm-stop'];
+const EXCLUSIVE: JobKind[] = ['setup', 'leaktest', 'vm-start', 'vm-stop', 'shares'];
 const CAPTION_MS = 8000;
 
 export class Controller extends EventEmitter {
@@ -106,6 +115,7 @@ export class Controller extends EventEmitter {
   private later = new Set<NodeJS.Timeout>();
   private disposed = false;
   private pollingEvents = false;
+  private vmSeq = 0;
   /** 「做完了」：同一项目 5 分钟内只弹一次；「在等你」：同一项目 1 分钟内一次 */
   private doneThrottle = new Throttle(5 * 60_000);
   private waitThrottle = new Throttle(60_000);
@@ -119,6 +129,10 @@ export class Controller extends EventEmitter {
       const d = defaultSettings(host.home, host.dataDir);
       this.settings = { ...this.settings, vmName: d.vmName, limaHome: d.limaHome, stateDir: d.stateDir };
     }
+    // 设置文件可能被手改：共享列表只留字符串
+    const folders = (this.settings as { sharedFolders?: unknown }).sharedFolders;
+    this.settings.sharedFolders = Array.isArray(folders) ? folders.filter((f): f is string => typeof f === 'string') : [];
+    this.settings.sharesEnabled = this.settings.sharesEnabled === true;
     this.state = readJson<Persisted>(this.file('app-state.json')) ?? {};
     this.jobs = new JobStore(path.join(host.dataDir, 'jobs'), host.kitDir, this.now);
     this.vm = { name: this.settings.vmName, status: 'Unknown' };
@@ -131,6 +145,7 @@ export class Controller extends EventEmitter {
     this.path = parseLoginPath(await this.host.loginPathOutput().catch(() => undefined));
     await this.refreshVm();
     await this.refreshCore();
+    void this.refreshShares();
     if (this.vm.status === 'Running') void this.quickCheck('启动');
     this.timers.push(setInterval(() => this.pollJobs(), 2000));
     this.timers.push(setInterval(() => void this.refreshVm().then(() => this.refreshCore()), 15_000));
@@ -335,8 +350,12 @@ export class Controller extends EventEmitter {
   }
 
   async refreshVm(): Promise<void> {
-    const env = limaEnv({ path: this.path ?? parseLoginPath(undefined), home: this.host.home, user: this.host.user, tmpdir: this.host.tmpdir, settings: this.settings });
+    // 拿到登录 shell 的 PATH 之前不查：默认 PATH 里可能找不到 limactl，会把 VM 错报成「找不到 limactl」
+    if (this.path === undefined) return;
+    const seq = ++this.vmSeq;
+    const env = limaEnv({ path: this.path, home: this.host.home, user: this.host.user, tmpdir: this.host.tmpdir, settings: this.settings });
     const out = await runCommand('limactl', ['list', '--json'], env, 20_000);
+    if (seq !== this.vmSeq) return; // 之后又发起了一次：以较新的那次为准，旧结果不覆盖它
     const prev = this.vm.status;
     if (out.code === 0) {
       this.vm = parseLimaList(out.stdout, this.settings.vmName);
@@ -458,6 +477,18 @@ export class Controller extends EventEmitter {
         void this.refreshVm().then(() => this.quickCheck('启停后'));
         if (!ok) this.caption('error', `${job.title}失败：${job.reason ?? ''}`);
         break;
+      case 'shares':
+        this.caption(ok ? 'ok' : 'error', ok ? '共享文件夹已应用，VM 已重启' : `共享文件夹没有应用好：${job.reason ?? ''}`);
+        // 依次刷新共享、VM 状态、出口核心，再做一次快速检查
+        void this.refreshShares()
+          .then(() => this.refreshVm())
+          .then(() => this.refreshCore())
+          .then(() => this.quickCheck('应用共享后'));
+        break;
+      case 'push':
+      case 'pull':
+        this.caption(ok ? 'ok' : 'error', ok ? `${job.title}：完成` : `${job.title}失败：${job.reason ?? ''}`);
+        break;
       case 'clone': {
         const name = result?.values.project;
         this.caption(ok ? 'ok' : 'error', ok ? `克隆完成：${name ?? ''}` : `克隆失败：${job.reason ?? ''}`);
@@ -466,6 +497,127 @@ export class Controller extends EventEmitter {
       }
     }
     this.save();
+  }
+
+  // ------------------------------------------------------------------ 共享文件夹
+  private shareContext() {
+    return { home: this.host.home, limaHome: this.settings.limaHome, stateDir: this.settings.stateDir, kitDir: this.host.kitDir };
+  }
+
+  private sharesFile(): string {
+    return path.join(this.settings.stateDir, 'shares.txt');
+  }
+
+  async refreshShares(): Promise<void> {
+    const result = await this.run('share.sh', ['status'], 30_000);
+    // 读不到状态就不显示已应用的共享（不确定就不当真）；路径问题照样记下
+    if (result.exitCode === 0) this.state.shares = result.shares;
+    else this.state.shares = undefined;
+    this.save();
+    this.changed();
+  }
+
+  private saveSettings(next: Settings): Settings {
+    this.settings = next;
+    writeJson(this.file('settings.json'), next);
+    this.changed();
+    return next;
+  }
+
+  /** 调用前主进程已经弹框选好文件夹；只改设置，应用时才写 shares.txt */
+  addSharedFolder(folder: string): Settings {
+    if (typeof folder !== 'string' || !folder.startsWith('/') || /[\n\r\0]/.test(folder)) throw new Error('无效的文件夹路径');
+    const p = folder.length > 1 ? folder.replace(/\/+$/, '') : folder;
+    if (this.settings.sharedFolders.includes(p)) return this.settings;
+    if (this.settings.sharedFolders.length >= 32) throw new Error('最多共享 32 个文件夹');
+    return this.saveSettings({ ...this.settings, sharedFolders: [...this.settings.sharedFolders, p] });
+  }
+
+  removeSharedFolder(folder: string): Settings {
+    return this.saveSettings({ ...this.settings, sharedFolders: this.settings.sharedFolders.filter((f) => f !== folder) });
+  }
+
+  setSharesEnabled(on: boolean): Settings {
+    return this.saveSettings({ ...this.settings, sharesEnabled: on === true });
+  }
+
+  /** 调用前主进程已经弹框说明风险。写 shares.txt，然后在后台跑 share.sh apply（会重启 VM） */
+  applyShares(): string {
+    const busy = this.jobs.runningOf(EXCLUSIVE);
+    if (busy) throw new Error(`「${busy.title}」还在进行，结束后再试`);
+    if (this.settings.sharesEnabled) {
+      for (const p of this.settings.sharedFolders) {
+        const problem = sharePathProblem(p, this.shareContext());
+        if (problem) throw new Error(`不能共享：${problem}`);
+      }
+    }
+    fs.mkdirSync(this.settings.stateDir, { recursive: true });
+    const file = this.sharesFile();
+    fs.writeFileSync(file + '.tmp', sharesFileContent(this.settings));
+    fs.renameSync(file + '.tmp', file);
+    return this.startJob('shares', '应用共享文件夹并重启 VM', 'share.sh', ['apply']);
+  }
+
+  private sharesState(): SharesState {
+    const desired = shareLines(sharesFileContent(this.settings));
+    const current = shareLines(readText(this.sharesFile()));
+    const pendingApply = desired.length !== current.length || desired.some((p, i) => p !== current[i]);
+    const problems: Record<string, string> = {};
+    for (const p of this.settings.sharedFolders) {
+      const problem = sharePathProblem(p, this.shareContext());
+      if (problem) problems[p] = problem;
+    }
+    for (const s of this.state.shares ?? []) if (s.problem) problems[s.path] = s.problem;
+    return {
+      applied: (this.state.shares ?? []).map((s) => ({ path: s.path, name: s.name, view: s.view })),
+      pendingApply,
+      problems,
+    };
+  }
+
+  // ------------------------------------------------------------------ 传文件
+  private vmPath(p: unknown): string {
+    if (typeof p !== 'string') throw new Error('VM 路径应为字符串');
+    const problem = vmPathProblem(p);
+    if (problem) throw new Error(problem);
+    return p;
+  }
+
+  async listFiles(p: string): Promise<FileListing> {
+    const result = await this.run('files.sh', ['list', this.vmPath(p)], 60_000);
+    if (!result.ok) throw new Error(result.reason ?? '没能列出文件');
+    const truncated = Number(result.values.truncated);
+    return { path: result.values.path || p, entries: result.files, ...(Number.isFinite(truncated) && truncated > 0 ? { truncated } : {}) };
+  }
+
+  async makeDir(p: string): Promise<void> {
+    const result = await this.run('files.sh', ['mkdir', this.vmPath(p)]);
+    if (!result.ok) throw new Error(result.reason ?? '没能新建文件夹');
+  }
+
+  /** 调用前主进程已经确认过 */
+  async removePath(p: string): Promise<boolean> {
+    const result = await this.run('files.sh', ['rm', this.vmPath(p)], 120_000);
+    if (!result.ok) throw new Error(result.reason ?? '没能删除');
+    return true;
+  }
+
+  /** 主进程已经校验过 Mac 路径（绝对路径、存在、顶层不是符号链接）；每个路径一个后台任务 */
+  pushPaths(paths: string[], destDir: string): string[] {
+    const dest = this.vmPath(destDir);
+    const ids: string[] = [];
+    for (const p of paths) {
+      if (typeof p !== 'string' || !p.startsWith('/')) throw new Error('Mac 路径必须是绝对路径');
+      ids.push(this.startJob('push', `上传 ${path.basename(p)}`, 'files.sh', ['push', p, dest]));
+    }
+    return ids;
+  }
+
+  /** 主进程已经弹过保存对话框；目标已存在时对话框里已经确认覆盖 */
+  pullFile(vmFile: string, dest: string, overwrite: boolean): string {
+    const src = this.vmPath(vmFile);
+    if (typeof dest !== 'string' || !dest.startsWith('/')) throw new Error('Mac 目标必须是绝对路径');
+    return this.startJob('pull', `下载 ${path.posix.basename(src)}`, 'files.sh', ['pull', src, dest, ...(overwrite ? ['--force'] : [])]);
   }
 
   // ------------------------------------------------------------------ 基线
@@ -597,7 +749,7 @@ export class Controller extends EventEmitter {
       // 指向了另一个 VM 或另一份基线：旧结论作废（手动验收矩阵也属于原来的 VM）
       this.state = {};
       this.save();
-      void this.refreshVm().then(() => this.quickCheck('设置变更'));
+      void this.refreshVm().then(() => this.refreshShares()).then(() => this.quickCheck('设置变更'));
     }
     if (interval) this.armCheckTimer();
     this.changed();
@@ -678,6 +830,7 @@ export class Controller extends EventEmitter {
       claude: this.state.claude ?? {},
       core: this.builtin() ? this.coreStatus : undefined,
       captions: this.captions,
+      shares: this.sharesState(),
       matrix: this.state.matrix ?? {},
       settings: this.settings,
       paths: {

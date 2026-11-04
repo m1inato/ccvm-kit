@@ -31,7 +31,7 @@ const LABELS: Record<string, string> = {
   'host.macos_arm64': 'Apple Silicon 原生终端',
   'lima.version': 'Lima ≥ 2.1',
   'lima.no_global_config': 'Lima 目录里没有全局覆盖配置',
-  'lima.effective_config': 'VM 无挂载、无额外网络',
+  'lima.effective_config': 'VM 无额外网络，挂载只有允许的共享',
   'listener.loopback_only': '专用入口只听回环',
   'egress.host_matches_baseline': 'Mac 专用入口出口 = 基线',
   'egress.host_reachable': '经专用入口能出网',
@@ -47,7 +47,7 @@ const LABELS: Record<string, string> = {
   'vm.nftables_masked': '通用 nftables 已屏蔽',
   'vm.resolv_static': 'DNS 指向 TUN',
   'vm.ipv6_off': 'IPv6 已关闭',
-  'vm.no_host_mounts': '没有宿主目录挂载',
+  'vm.no_host_mounts': '没有未经允许的宿主目录挂载',
   'vm.dns_doh': 'DNS 经 DoH',
   'vm.anthropic_reachable': 'api.anthropic.com 可达',
   'cc.no_priv_groups': 'cc 不在特权组',
@@ -141,6 +141,7 @@ export function reportMarkdown(snap: Snapshot, now: number): string {
     `- Mac 专用入口出口：${snap.egress.host ?? '未知'}`,
     `- VM 出口：${snap.egress.vm ?? '未知'}`,
     `- VM：${snap.vm.name} · ${snap.vm.status}`,
+    `- 共享文件夹：${snap.shares.applied.length ? `${snap.shares.applied.length} 个 · 读写（${snap.shares.applied.map((s) => s.view).join('、')}）` : '无'}`,
     '',
   ];
   if (leak) {

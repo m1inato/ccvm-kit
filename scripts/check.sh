@@ -31,7 +31,13 @@ else
 fi
 
 info "VM 内检查"
-rc=0; vm_script selfcheck.sh "$exp" "$mode" | relay_guest || rc=$?
+rc=0
+if [ "$mode" = full ]; then
+  # 完整验收把允许的共享名交给 VM：只有它们的挂载算正常
+  vm_script selfcheck.sh "$exp" "$mode" "$(share_names | tr '\n' ',' | sed 's/,$//')" | relay_guest || rc=$?
+else
+  vm_script selfcheck.sh "$exp" "$mode" | relay_guest || rc=$?
+fi
 
 if [ "$rc" -eq 0 ] && [ "$host_ok" -eq 1 ]; then
   printf '%s全部通过%s\n' "$G" "$N"

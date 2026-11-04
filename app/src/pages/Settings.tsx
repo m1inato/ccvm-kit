@@ -1,4 +1,4 @@
-// 设置：网络出口 / VM / 检查与提醒 / Mac 执行 / 通用。
+// 设置：网络出口 / VM / 检查与提醒 / 共享文件夹 / Mac 执行 / 通用。
 import { useEffect, useState } from 'react';
 import { latestChecks } from '../../core/checks';
 import { relativeTime } from '../../core/status';
@@ -11,6 +11,7 @@ const TABS: [string, string][] = [
   ['egress', '网络出口'],
   ['vm', 'VM'],
   ['checks', '检查与提醒'],
+  ['shares', '共享文件夹'],
   ['exec', 'Mac 执行'],
   ['general', '通用'],
 ];
@@ -33,6 +34,7 @@ export function SettingsPage({ tab }: { tab: string }) {
         {tab === 'egress' && <Egress />}
         {tab === 'vm' && <Vm />}
         {tab === 'checks' && <Checks />}
+        {tab === 'shares' && <Shares />}
         {tab === 'exec' && <Exec />}
         {tab === 'general' && <General />}
       </main>
@@ -286,6 +288,78 @@ function Exec() {
       <div className="callout warn">
         设计里还有一个未解决的问题：被批准的命令（例如 xcodebuild test）会运行 VM 里写出的代码，而专用账户 ccvm-bot 在 Mac 上的网络不受限，可以绕过固定节点直接出网，也能连到 Mac 本机的 7897、9090 等端口。补上之前不会启用这个功能，详见设计方案。
       </div>
+    </div>
+  );
+}
+
+/** 共享文件夹（读写）：设计降级，见 docs/desktop-app.md。改动都要「应用并重启 VM」才生效 */
+function Shares() {
+  const { snap, run, go } = useApp();
+  const s = snap.settings;
+  const sh = snap.shares;
+  const busy = snap.jobs.find((j) => j.state === 'running' && j.kind === 'shares');
+  const view = (p: string) => sh.applied.find((a) => a.path === p)?.view;
+  return (
+    <div className="settings-section">
+      <div>
+        <h1>共享文件夹</h1>
+        <p className="small muted">
+          让 VM 读写你在 Mac 上选定的具体文件夹。VM 里在 <code>/home/cc/mac/&lt;名字&gt;</code>。网络隔离不变，状态仍然是「受保护」，顶栏会常驻「共享 N 个文件夹 · 读写」。
+        </p>
+      </div>
+      <div className="callout warn col" style={{ gap: 6 }}>
+        <b>共享是读写的，这会削弱隔离</b>
+        <span>· VM 里的程序（包括 Claude）可以修改这些文件夹里的任何文件，包括脚本、<code>.git/hooks</code>、<code>package.json</code> 里的 scripts。之后在 Mac 上运行它们，就等于以你的权限执行。</span>
+        <span>· 这些文件夹的内容可以经固定出口发出去。</span>
+        <span>· 家目录本身、<code>~/Library</code>、<code>~/.ssh</code> 这类敏感位置，以及 CCVM 自己的目录，不能共享。</span>
+        <span>· 应用时会重启 VM，正在运行的 tmux 会话（包括 Claude）会被中断。</span>
+      </div>
+      <div className="card pad">
+        <div className="setting-row">
+          <span className="grow">允许 VM 访问共享文件夹</span>
+          <Toggle checked={s.sharesEnabled} onChange={(v) => run(() => act('setSharesEnabled', v))} />
+        </div>
+        {s.sharedFolders.length === 0 && <p className="small muted" style={{ padding: '10px 0' }}>还没有选文件夹。</p>}
+        {s.sharedFolders.map((p) => (
+          <div className="setting-row" key={p} style={{ alignItems: 'flex-start' }}>
+            <div className="grow col" style={{ gap: 2 }}>
+              <span className="mono" style={{ wordBreak: 'break-all' }}>{p}</span>
+              {sh.problems[p] ? (
+                <span className="tiny err-text">不能共享：{sh.problems[p]}</span>
+              ) : view(p) ? (
+                <span className="tiny muted">VM 里：<code>{view(p)}</code></span>
+              ) : (
+                <span className="tiny muted">还没应用</span>
+              )}
+            </div>
+            <button className="btn sm ghost" onClick={() => run(() => act('removeSharedFolder', p))}>
+              移除
+            </button>
+          </div>
+        ))}
+        <div className="row" style={{ paddingTop: 10 }}>
+          <button className="btn sm" onClick={() => run(() => act('addSharedFolder'))}>
+            添加文件夹…
+          </button>
+          <span className="spacer" />
+          {sh.pendingApply && <span className="tiny" style={{ color: 'var(--warn)' }}>有改动还没应用</span>}
+          <button
+            className="btn sm primary"
+            disabled={!sh.pendingApply || !!busy || snap.vm.status === 'Missing'}
+            onClick={() => run(async () => {
+              const id = await act('applyShares');
+              if (id) go(`/jobs/${id}`);
+            })}
+          >
+            {busy ? '正在应用…' : '应用并重启 VM'}
+          </button>
+        </div>
+      </div>
+      {sh.applied.length > 0 && (
+        <p className="tiny faint">
+          当前已应用：{sh.applied.map((a) => `${a.path} → ${a.view}`).join('；')}
+        </p>
+      )}
     </div>
   );
 }

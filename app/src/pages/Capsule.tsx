@@ -43,6 +43,12 @@ export function CapsulePage({ notice, onCloseNotice }: { notice?: string; onClos
             <span className="ip">{ip}</span>
           </>
         )}
+        {snap.shares.applied.length > 0 && (
+          <>
+            <span className="sep-dot">·</span>
+            <span className="muted" title="VM 能读写这些 Mac 文件夹">共享 {snap.shares.applied.length} 个文件夹 · 读写</span>
+          </>
+        )}
         {active && (
           <>
             <span className="sep-dot">·</span>

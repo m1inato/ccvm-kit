@@ -24,7 +24,7 @@ npm start           # 构建后用 Electron 打开
 npm run dist        # 打包 dmg（未签名；发给别人需要签名和公证）
 ```
 
-只看界面：`npm run dev`，浏览器打开 `http://localhost:5199/?demo=ok`。`demo` 可选 `ok`（自带核心）、`cv`（Clash Verge 模式）、`egress`（出口变了）、`node`（选定节点变了）、`busy`、`stopped`、`welcome`、`setup`。这时用的是演示数据，不会调用任何脚本。
+只看界面：`npm run dev`，浏览器打开 `http://localhost:5199/?demo=ok`。`demo` 可选 `ok`（自带核心）、`cv`（Clash Verge 模式）、`egress`（出口变了）、`node`（选定节点变了）、`busy`、`stopped`、`welcome`、`setup`、`shares`（共享文件夹与「文件」页）。这时用的是演示数据，不会调用任何脚本。
 
 ## 在任意终端里用 `ccvm`
 
