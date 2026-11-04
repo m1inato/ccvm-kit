@@ -28,8 +28,9 @@ import { LOGIN_PATH_COMMAND, parseLoginPath } from '../core/env';
 import { isIPv4, PROJECT_NAME } from '../core/parsers';
 import { reportMarkdown } from '../core/report';
 import { relativeTime } from '../core/status';
-import type { EgressMode, Settings, Snapshot } from '../core/types';
-import { adminCommandFile, ccCommandFile, openCommandFile } from './terminal';
+import type { CliStatus, EgressMode, Settings, Snapshot } from '../core/types';
+import { ccvmScript, isGeneratedCcvm, pathHas, PATH_HINT } from '../core/cli';
+import { adminCommandFile, ccCommandFile, ccvmArgs, openCommandFile, openGhostty, writeCcvm } from './terminal';
 import { Terminals, type OpenSpec } from './terminals';
 import { dotImage } from './trayIcon';
 
@@ -278,6 +279,53 @@ function loginPath(): string {
 }
 let cachedLoginPath: string | undefined;
 
+// ---------------------------------------------------------------- 命令行入口 ccvm
+// App 自己用的一份放在 userData/bin/ccvm（外部终端和 Ghostty 都调用它）；用户点「安装」后另写一份到 ~/.local/bin/ccvm。
+// VM 名、Lima 目录、状态目录、PATH 或 App 位置变了，两份都自动重写；~/.local/bin/ccvm 不是 CCVM 生成的就不动。
+const userCcvm = path.join(os.homedir(), '.local', 'bin', 'ccvm');
+let lastCcvm: string | undefined;
+
+function internalCcvm(): string {
+  return path.join(app.getPath('userData'), 'bin', 'ccvm');
+}
+
+function syncCcvm(): string {
+  const content = ccvmScript(kitDir, controller.settings, loginPath());
+  if (content !== lastCcvm) {
+    writeCcvm(internalCcvm(), content);
+    try {
+      if (isGeneratedCcvm(fs.readFileSync(userCcvm, 'utf8'))) writeCcvm(userCcvm, content);
+    } catch {
+      /* 没安装，或者不是 CCVM 生成的：不动 */
+    }
+    lastCcvm = content;
+  }
+  return internalCcvm();
+}
+
+function cliStatus(): CliStatus {
+  let content: string | undefined;
+  try {
+    content = fs.readFileSync(userCcvm, 'utf8');
+  } catch {
+    content = undefined;
+  }
+  return {
+    path: userCcvm,
+    installed: content !== undefined,
+    generated: content !== undefined && isGeneratedCcvm(content),
+    onPath: pathHas(loginPath(), path.dirname(userCcvm)),
+    hint: PATH_HINT,
+  };
+}
+
+async function openInTerminal(project?: string): Promise<void> {
+  const ccvm = syncCcvm();
+  const term = controller.settings.terminalApp;
+  if (term === 'Ghostty') await openGhostty(ccvm, ccvmArgs(project), os.homedir());
+  else openCommandFile(path.join(app.getPath('userData'), 'run'), project ? `cc-${project}.command` : 'cc.command', ccCommandFile(ccvm, project), term);
+}
+
 async function dispatch(name: string, args: unknown[]): Promise<unknown> {
   switch (name) {
     case 'quickCheck':
@@ -318,13 +366,31 @@ async function dispatch(name: string, args: unknown[]): Promise<unknown> {
       if (project !== undefined && !PROJECT_NAME.test(project)) throw new Error('无效的项目名');
       const gate = controller.canOpenSession();
       if (!gate.ok) throw new Error(`现在不打开新会话：${gate.reason}`);
-      const content = ccCommandFile(kitDir, controller.settings, loginPath(), project);
-      openCommandFile(path.join(app.getPath('userData'), 'run'), project ? `cc-${project}.command` : 'cc.command', content, controller.settings.terminalApp);
+      await openInTerminal(project);
+      // 带项目时 ccvm 会新建 tmux 会话：过一会儿刷新，让它出现在项目页
+      if (project) setTimeout(() => void controller.refreshProjects(), 6000);
       return;
     }
-    case 'openAdminShell':
-      openCommandFile(path.join(app.getPath('userData'), 'run'), 'admin.command', adminCommandFile(controller.settings, loginPath()), controller.settings.terminalApp);
+    case 'openAdminShell': {
+      const runDir = path.join(app.getPath('userData'), 'run');
+      const content = adminCommandFile(controller.settings, loginPath());
+      if (controller.settings.terminalApp === 'Ghostty') {
+        fs.mkdirSync(runDir, { recursive: true, mode: 0o700 });
+        fs.writeFileSync(path.join(runDir, 'admin.command'), content, { mode: 0o700 });
+        await openGhostty('/bin/bash', [path.join(runDir, 'admin.command')], os.homedir());
+      } else {
+        openCommandFile(runDir, 'admin.command', content, controller.settings.terminalApp);
+      }
       return;
+    }
+    case 'cliStatus':
+      syncCcvm();
+      return cliStatus();
+    case 'installCli':
+      writeCcvm(userCcvm, ccvmScript(kitDir, controller.settings, loginPath()));
+      lastCcvm = undefined;
+      syncCcvm();
+      return cliStatus();
     case 'updateSettings': {
       const patch = args[0];
       if (!patch || typeof patch !== 'object') throw new Error('设置格式不对');
@@ -598,6 +664,11 @@ void app.whenReady().then(async () => {
   screen.on('display-metrics-changed', keepCapsuleOnScreen);
 
   controller.on('snapshot', (snap: Snapshot) => {
+    try {
+      syncCcvm();
+    } catch {
+      /* 写不了时，下次打开终端会再试并报错 */
+    }
     updateTray(snap);
     syncCapsule(snap);
     for (const win of [mainWin, capsuleWin]) {

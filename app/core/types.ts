@@ -157,7 +157,21 @@ export interface Issue {
 }
 
 export type EgressMode = 'clash-verge' | 'builtin';
-export type TerminalApp = 'Terminal' | 'iTerm';
+export type TerminalApp = 'Terminal' | 'iTerm' | 'Ghostty';
+export const TERMINAL_APPS: TerminalApp[] = ['Terminal', 'iTerm', 'Ghostty'];
+
+/** 命令行入口 ~/.local/bin/ccvm 的状态 */
+export interface CliStatus {
+  path: string;
+  /** 文件存在 */
+  installed: boolean;
+  /** 存在而且是 CCVM 生成的（App 会自动更新它）；存在但不是时 App 不覆盖 */
+  generated: boolean;
+  /** 登录 shell 的 PATH 里有它所在的目录 */
+  onPath: boolean;
+  /** 不在 PATH 里时，建议加到 ~/.zshrc 的一行 */
+  hint: string;
+}
 
 export interface Settings {
   vmName: string;
@@ -262,4 +276,7 @@ export interface Actions {
   refreshCore(): Promise<void>;
   killSession(name: string): Promise<boolean>;
   setHooks(enabled: boolean): Promise<Settings>;
+  cliStatus(): Promise<CliStatus>;
+  /** 生成 ~/.local/bin/ccvm（0755，不需要管理员权限） */
+  installCli(): Promise<CliStatus>;
 }

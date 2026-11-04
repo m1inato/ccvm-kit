@@ -26,6 +26,32 @@ npm run dist        # 打包 dmg（未签名；发给别人需要签名和公证
 
 只看界面：`npm run dev`，浏览器打开 `http://localhost:5199/?demo=ok`。`demo` 可选 `ok`（自带核心）、`cv`（Clash Verge 模式）、`egress`（出口变了）、`node`（选定节点变了）、`busy`、`stopped`、`welcome`、`setup`。这时用的是演示数据，不会调用任何脚本。
 
+## 在任意终端里用 `ccvm`
+
+桌面端的 设置 → 通用 →「安装命令行入口 `ccvm`」会生成 `~/.local/bin/ccvm`（权限 0755，不需要管理员权限）。它清掉代理变量，只带 CCVM 的设置和登录 shell 的 `PATH`，然后调用 App 包里套件的 `scripts/enter.sh`：先检查，检查不过就拒绝。VM 名、Lima 目录、状态目录改了，App 会自动重新生成它；文件开头写着「由 CCVM 生成，会被覆盖」，不要手改。
+
+在任何终端（Terminal、iTerm、Ghostty……）里按 Cmd+T 开新标签，然后：
+
+| 输入 | 做什么 |
+|---|---|
+| `ccvm` | 进入 cc 的普通 shell |
+| `ccvm my-api` | 在 `~/work/my-api` 新建一个 tmux 会话（名字是 `my-api-<第一个空闲序号>`），App 项目页的会话列表里能看到它 |
+| `ccvm -a my-api-1` | 接回已有的会话。不做检查，所以出口出错时也能回到正在跑的 Claude |
+
+其他以 `-` 开头的参数原样传给 `enter.sh`。如果 `~/.local/bin` 不在 `PATH` 里，App 会给出一行，加到 `~/.zshrc` 即可（App 不会自己改 shell 配置）：
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+**Ghostty**：设置里「用哪个终端打开 cc」可以选 Ghostty（需要 1.3.0 或更新，经 AppleScript 新开窗口；第一次会请求「自动化」权限）。如果这个 Ghostty 只用来开 VM，可以在 Ghostty 配置里写
+
+```
+command = ~/.local/bin/ccvm
+```
+
+这样所有新窗口和新标签都直接进 VM（Ghostty 文档没有写明 `command` 里的 `~` 一定会展开；如果提示找不到命令，换成 `echo ~/.local/bin/ccvm` 打印出的绝对路径）。Ghostty 没有按窗口区分的配置，新建标签的动作也不能带命令，所以做不到「只在 VM 窗口里按 Cmd+T 自动进 VM」，原因见 [桌面端说明](../docs/desktop-app.md)。
+
 ## 结构
 
 ```

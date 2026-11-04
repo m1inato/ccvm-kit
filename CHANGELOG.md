@@ -17,6 +17,8 @@
 - 桌面端 M4：内嵌终端（xterm.js + node-pty），会话跑在 VM 里 cc 的 tmux 中，关窗口只是断开；可选的「Claude 做完了」字幕（root 所有的 managed-settings hook）。
 - `enter.sh --session` / `--attach`；`workspace.sh` 列出 tmux 会话、`kill-session`、`events`；新增 `hooks.sh`。新装 VM 的基础包加入 `tmux`。
 - VS Code 远程这一轮不做：它在 VM 和 Mac 之间打开的通道不止端口转发，见 `docs/desktop-app.md`。
+- `enter.sh --project P --session auto`：检查通过后按 App 的规则自动取会话名（`<项目>-<第一个空闲序号>`）。
+- 桌面端：命令行入口 `ccvm`（设置 → 通用里安装到 `~/.local/bin/ccvm`，设置变了自动重写）；`.command` 文件改为只调用它；「用哪个终端打开 cc」增加 Ghostty（AppleScript，需要 1.3.0 或更新）。
 - 桌面胶囊修复：窗口跟内容一样大（原来 480×170 的透明窗口会挡住下面窗口的点击）；按钮第一下就能点（`acceptFirstMouse`）；打开胶囊不再隐藏 Dock 图标；显示器变化后拉回屏幕内；胶囊里的操作失败时显示原因。
 
 - 打包不再生成校验文件；桌面端判断节点是否变化改为逐字段比较内容。项目不使用这类哈希，规则见 `AGENTS.md`。

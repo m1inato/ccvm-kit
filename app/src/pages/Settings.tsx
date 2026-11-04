@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { latestChecks } from '../../core/checks';
 import { relativeTime } from '../../core/status';
-import type { Settings } from '../../core/types';
+import type { CliStatus, Settings } from '../../core/types';
 import { act, useApp } from '../api';
 import { Dot, gib, Toggle } from '../components/common';
 import { CoreDetails, CoreSetup, CoreStatusLine } from '../components/EgressCore';
@@ -290,6 +290,42 @@ function Exec() {
   );
 }
 
+/** 命令行入口 ccvm：任意终端里 Cmd+T 后输入 ccvm 就能进 VM */
+function CliRow() {
+  const { run } = useApp();
+  const [st, setSt] = useState<CliStatus | null>(null);
+  useEffect(() => {
+    void run(() => act('cliStatus')).then((s) => s && setSt(s));
+  }, [run]);
+  const install = async () => {
+    const s = await run(() => act('installCli'), '已生成 ccvm');
+    if (s) setSt(s);
+  };
+  return (
+    <div className="setting-row" style={{ alignItems: 'flex-start' }}>
+      <div className="grow col" style={{ gap: 4 }}>
+        <span>
+          命令行入口 <code>ccvm</code>
+        </span>
+        <span className="tiny muted">
+          在任意终端里：<code>ccvm</code> 进入 cc，<code>ccvm 项目</code> 新建会话，<code>ccvm -a 会话</code> 接回会话。都会先经过检查。
+        </span>
+        {st?.installed && !st.generated && <span className="tiny err-text">{st.path} 已存在，而且不是 CCVM 生成的，App 不会覆盖它。</span>}
+        {st?.generated && <span className="tiny muted">已安装：{st.path}（设置变了会自动更新）</span>}
+        {st?.generated && !st.onPath && (
+          <span className="tiny">
+            <code>~/.local/bin</code> 不在 PATH 里。把这一行加到 <code>~/.zshrc</code>：<code className="mono">{st.hint}</code>{' '}
+            <a onClick={() => run(() => act('copyText', st.hint), '已复制')}>复制</a>
+          </span>
+        )}
+      </div>
+      <button className="btn sm" disabled={!!st?.installed && !st.generated} onClick={() => void install()}>
+        {st?.generated ? '重新生成' : '安装命令行入口 ccvm'}
+      </button>
+    </div>
+  );
+}
+
 function General() {
   const { snap, go, run } = useApp();
   const save = useSave();
@@ -306,8 +342,15 @@ function General() {
           <select className="input" value={snap.settings.terminalApp} onChange={(e) => save({ terminalApp: e.target.value as Settings['terminalApp'] })}>
             <option value="Terminal">终端（Terminal）</option>
             <option value="iTerm">iTerm</option>
+            <option value="Ghostty">Ghostty（1.3.0 或更新）</option>
           </select>
         </div>
+        {snap.settings.terminalApp === 'Ghostty' && (
+          <p className="tiny muted" style={{ padding: '0 0 10px' }}>
+            经 AppleScript 让 Ghostty 新开窗口。第一次会弹出「自动化」权限请求：允许 CCVM 控制 Ghostty。
+          </p>
+        )}
+        <CliRow />
         <div className="setting-row">
           <span className="grow">验收记录</span>
           <button className="btn sm" onClick={() => run(() => act('exportReport'))}>

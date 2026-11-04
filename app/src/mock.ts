@@ -240,6 +240,7 @@ export function createMockBridge(): Bridge {
     return id;
   };
 
+  let cli = { path: '~/.local/bin/ccvm', installed: false, generated: false, onPath: false, hint: 'export PATH="$HOME/.local/bin:$PATH"' };
   const actions: Record<string, (...a: never[]) => unknown> = {
     quickCheck: async () => {
       update({ checking: true });
@@ -362,6 +363,11 @@ export function createMockBridge(): Bridge {
     killSession: async (name: string) => {
       update({ sessions: snap.sessions.filter((s) => s.name !== name) });
       return true;
+    },
+    cliStatus: async () => cli,
+    installCli: async () => {
+      cli = { ...cli, installed: true, generated: true };
+      return cli;
     },
     setHooks: async (enabled: boolean) => {
       update({ settings: { ...snap.settings, hooksEnabled: enabled } });

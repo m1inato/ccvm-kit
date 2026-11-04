@@ -10,6 +10,7 @@ import type { CoreManager } from './egress';
 import { isIPv4, gitUrlProblem, parseLimaList, renderClashScript, toProject } from './parsers';
 import { MATRIX } from './report';
 import { runCommand, runScript } from './runner';
+import { TERMINAL_APPS } from './types';
 import { AlertTracker, deriveLevel, issuesFromCheck, issuesFromCore, issuesFromLeak, newestCheck, Throttle } from './status';
 import type {
   Caption,
@@ -582,7 +583,7 @@ export class Controller extends EventEmitter {
     }
     const minutes = Number(next.checkIntervalMin);
     next.checkIntervalMin = Math.min(120, Math.max(2, Math.round(Number.isFinite(minutes) ? minutes : 10)));
-    if (next.terminalApp !== 'iTerm') next.terminalApp = 'Terminal';
+    if (!TERMINAL_APPS.includes(next.terminalApp)) next.terminalApp = 'Terminal';
     // 出网方式只能经 setEgressMode 切换（要启停核心）
     next.nodeName = String(next.nodeName ?? '').slice(0, 200);
     for (const key of ['showCapsule', 'launchAtLogin', 'claudeLoginConfirmed', 'welcomeDone'] as const) next[key] = !!next[key];
