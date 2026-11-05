@@ -164,7 +164,8 @@ class ShareTests(ScriptHarness):
     def test_bindfs_install_drops_inherited_proxy_environment(self):
         self.stub("id", "echo 0")
         # 故意让所有安装尝试失败，在任何 root 文件写入之前结束。
-        self.stub("apt-get", 'printf "%s\\n" "$*" >> "$STUB_APT_CALLS"\n'
+        # 被测脚本的 PATH 只有桩：不管这台机器装没装 bindfs，都走安装分支，也到不了写 root 文件的步骤
+        self.stub("apt-get", 'PATH=/usr/bin:/bin\nprintf "%s\\n" "$*" >> "$STUB_APT_CALLS"\n'
                   'env | sed -n -E "/^((HTTP|HTTPS|ALL|NO)_PROXY|(http|https|all|no)_proxy|DEBIAN_FRONTEND)=/p" '
                   '>> "$STUB_APT_ENV"\nexit 1')
         calls = self.root / "apt-calls"
@@ -173,7 +174,7 @@ class ShareTests(ScriptHarness):
                                  "http_proxy", "https_proxy", "all_proxy", "no_proxy"),
                                 "http://192.168.5.2:7897")
         result = subprocess.run([BASH_EXEC, str(KIT / "guest/shares.sh"), "apply", "501", "20", "test"],
-                                env=self.env | proxies | {"STUB_APT_CALLS": str(calls), "STUB_APT_ENV": str(apt_env)},
+                                env=self.env | proxies | {"PATH": str(self.bin), "STUB_APT_CALLS": str(calls), "STUB_APT_ENV": str(apt_env)},
                                 text=True, capture_output=True, timeout=30)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("FAIL share.guest 安装 bindfs 失败", result.stdout)

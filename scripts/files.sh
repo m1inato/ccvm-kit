@@ -45,7 +45,7 @@ case "$op" in
   list|mkdir|rm) [ $# -eq 1 ] || die "$USAGE"; vm_path "$1" ;;
   push) [ $# -eq 2 ] || die "$USAGE"; vm_path "$2" ;;
   pull) [ $# -eq 2 ] || die "$USAGE"; vm_path "$1" ;;
-  *) die "未知操作：${op}（$USAGE）" ;;
+  *) die "未知操作：${op}（${USAGE}）" ;;
 esac
 require_mac
 require_running

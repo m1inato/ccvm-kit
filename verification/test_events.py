@@ -418,6 +418,19 @@ class EventTests(ScriptHarness):
         self.assertEqual(events[-1], {"v": 1, "type": "end", "ok": False, "code": 73})
 
 
+class HostScriptLintTests(unittest.TestCase):
+    """macOS Bash 3.2 reads a non-ASCII byte right after $name as part of the name: write ${name} there."""
+    def test_no_bare_variable_before_non_ascii(self):
+        bad = []
+        for path in sorted((KIT / "scripts").glob("*.sh")):
+            for no, line in enumerate(path.read_text().splitlines(), 1):
+                if line.lstrip().startswith("#"):
+                    continue
+                if re.search(r"\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7f]", line):
+                    bad.append(f"{path.name}:{no}: {line.strip()}")
+        self.assertEqual(bad, [])
+
+
 class GuestProtocolTests(unittest.TestCase):
     """Every PASS/FAIL the VM scripts can print carries a stable id that docs/events.md documents."""
     ID = re.compile(r"^[a-z0-9_.]+(\$\{port\})?$")

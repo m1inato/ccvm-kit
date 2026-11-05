@@ -6,6 +6,8 @@
 # 输出：PASS|FAIL vm.upgrade <说明>，以及 VALUE vm_level <级别>。
 set -uo pipefail
 LEVEL_FILE="${CCVM_LEVEL_FILE:-/var/lib/ccvm/level}"
+# Lima 的 /etc/environment 可能带着宿主的代理变量：清掉，让 apt 经现有 TUN 下载（和 shares.sh 安装 bindfs 同一处理）
+unset HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy
 export DEBIAN_FRONTEND=noninteractive
 
 current_level() {
@@ -40,7 +42,7 @@ highest="$(highest_step)"
 [ "$target" -le "$highest" ] || { echo "FAIL vm.upgrade 目标级别 $target 高于这份脚本知道的 $highest"; exit 1; }
 cur="$(current_level)"
 if [ "$cur" -ge "$target" ]; then
-  echo "PASS vm.upgrade 已是最新（级别 $cur），不需要补装"
+  echo "PASS vm.upgrade 已是最新（级别 ${cur}），不需要补装"
   echo "VALUE vm_level $cur"
   exit 0
 fi

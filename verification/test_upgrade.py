@@ -64,6 +64,29 @@ class UpgradeTests(ScriptHarness):
                 r = self.guest("current_level", text)
                 self.assertEqual(r.stdout.strip(), want, r.stderr)
 
+    def test_apt_runs_without_inherited_proxy_environment(self):
+        self.stub("id", "echo 0")
+        # 让安装一直失败：在写级别文件之前结束，只核对 apt 看到的环境
+        self.stub("apt-get", 'PATH=/usr/bin:/bin\nprintf "%s\\n" "$*" >> "$STUB_APT_CALLS"\n'
+                  'env | sed -n -E "/^((HTTP|HTTPS|ALL|NO)_PROXY|(http|https|all|no)_proxy|DEBIAN_FRONTEND)=/p" >> "$STUB_APT_ENV"\n'
+                  'exit 1')
+        calls, apt_env, level = self.root / "apt-calls", self.root / "apt-env", self.root / "level"
+        proxies = dict.fromkeys(("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+                                 "http_proxy", "https_proxy", "all_proxy", "no_proxy"), "http://192.168.5.2:7897")
+        result = subprocess.run([BASH_EXEC, str(KIT / "guest/upgrade.sh"), "1"],
+                                env=self.env | proxies | {"PATH": str(self.bin), "STUB_APT_CALLS": str(calls), "STUB_APT_ENV": str(apt_env),
+                                                          "CCVM_LEVEL_FILE": str(level)},
+                                text=True, capture_output=True, timeout=30)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("FAIL vm.upgrade 第 1 步没有完成", result.stdout)
+        self.assertIn("VALUE vm_level 0", result.stdout)
+        self.assertFalse(level.exists())   # 失败的步骤不写级别
+        self.assertEqual(calls.read_text().splitlines(),
+                         ["install -y --no-install-recommends git tmux", "update"])
+        for key in proxies:
+            self.assertNotRegex(apt_env.read_text(), rf"(?m)^{key}=")
+        self.assertIn("DEBIAN_FRONTEND=noninteractive", apt_env.read_text())
+
     def test_pending_steps_and_highest_step(self):
         self.assertEqual(self.guest("pending_steps 0 3").stdout.split(), ["1", "2", "3"])
         self.assertEqual(self.guest("pending_steps 1 1").stdout.split(), [])
