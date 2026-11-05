@@ -5,7 +5,7 @@ import { CHECK_GROUPS, checkLabel, LEAK_IDS, MATRIX, matrixDone, mergeChecks } f
 import { relativeTime } from '../../core/status';
 import type { CoreConnection, Level, Snapshot } from '../../core/types';
 import { act, errorText, useApp } from '../api';
-import { Dot, levelOf, RebaselineFlow } from './common';
+import { Dot, formatBytes, levelOf, RebaselineFlow } from './common';
 
 type Tab = 'chain' | 'conn' | 'checks';
 
@@ -159,12 +159,6 @@ function ConnectionsPanel({ snap }: { snap: Snapshot }) {
   );
 }
 
-function bytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 ** 2).toFixed(1)} MB`;
-}
-
 /** 每 3 秒读一次（面板开着时） */
 function usePolled<T>(load: () => Promise<T>): { data: T | null; err: string | null } {
   const [data, setData] = useState<T | null>(null);
@@ -210,7 +204,7 @@ function ConnectionList({ conns, offPath, okSummary, badSummary }: { conns: Core
             <div className="label">
               <b className="mono" style={{ fontSize: 12 }}>{dest}</b>
               <div>
-                {g.count} 条 · {bytes(g.total)}
+                {g.count} 条 · {formatBytes(g.total)}
                 {g.bad ? ` · 链路：${[...g.chains].join('；')}` : ''}
               </div>
             </div>

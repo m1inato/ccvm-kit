@@ -4,15 +4,9 @@ import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
 import { isMacPath } from '../../core/vmpath';
 import type { FileListing } from '../../core/types';
 import { act, errorText, getBridge, useApp } from '../api';
+import { formatBytes } from '../components/common';
 
 const HOME = '/home/cc';
-
-function size(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`;
-  return `${(n / 1024 ** 3).toFixed(1)} GB`;
-}
 
 function when(sec: number): string {
   if (!sec) return '';
@@ -198,7 +192,7 @@ export function FilesPage({ path }: { path: string }) {
             >
               <span className="icon">{e.file_type === 'dir' ? '▸' : e.file_type === 'link' ? '↪' : '·'}</span>
               <span className="grow name">{e.name}</span>
-              <span className="tiny muted size">{e.file_type === 'dir' ? '' : size(e.size)}</span>
+              <span className="tiny muted size">{e.file_type === 'dir' ? '' : formatBytes(e.size)}</span>
               <span className="tiny faint when">{when(e.mtime)}</span>
             </div>
           ))}

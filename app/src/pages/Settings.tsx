@@ -1,4 +1,4 @@
-// 设置：网络出口 / VM / 检查与提醒 / 共享文件夹 / Mac 执行 / 通用。
+// 设置：网络出口 / VM / 检查与提醒 / 共享文件夹 / 通用。
 import { useEffect, useState } from 'react';
 import { latestChecks } from '../../core/checks';
 import { relativeTime } from '../../core/status';
@@ -12,7 +12,6 @@ const TABS: [string, string][] = [
   ['vm', 'VM'],
   ['checks', '检查与提醒'],
   ['shares', '共享文件夹'],
-  ['exec', 'Mac 执行'],
   ['general', '通用'],
 ];
 
@@ -35,7 +34,6 @@ export function SettingsPage({ tab }: { tab: string }) {
         {tab === 'vm' && <Vm />}
         {tab === 'checks' && <Checks />}
         {tab === 'shares' && <Shares />}
-        {tab === 'exec' && <Exec />}
         {tab === 'general' && <General />}
       </main>
     </>
@@ -337,20 +335,6 @@ function Checks() {
       </div>
       <div className="callout small">
         Mac 唤醒、切换网络后会立即检查。检查结果超过 2.5 个间隔没有更新时，状态变灰，不会继续显示「受保护」。
-      </div>
-    </div>
-  );
-}
-
-function Exec() {
-  return (
-    <div className="settings-section">
-      <div>
-        <h1>Mac 执行</h1>
-        <p className="small muted">让 Claude 在 Mac 上跑 Xcode 构建等命令（每条都要你批准）。这是 M5，还没有实现。</p>
-      </div>
-      <div className="callout warn">
-        设计里还有一个未解决的问题：被批准的命令（例如 xcodebuild test）会运行 VM 里写出的代码，而专用账户 ccvm-bot 在 Mac 上的网络不受限，可以绕过固定节点直接出网，也能连到 Mac 本机的 7897、9090 等端口。补上之前不会启用这个功能，详见设计方案。
       </div>
     </div>
   );

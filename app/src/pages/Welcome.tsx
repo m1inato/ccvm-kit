@@ -1,5 +1,5 @@
 // 欢迎页：3 步，每步自己检测、做完自动变绿；随时可以「以后再说」。
-// 1 接上出口（M2 是 Clash Verge 模式；自带核心在 M3）→ 2 后台准备 VM → 3 在 VM 里装 Claude Code 并登录。
+// 1 接上出口 → 2 后台准备 VM → 3 在 VM 里装 Claude Code 并登录。
 import { useEffect, useState } from 'react';
 import { latestChecks } from '../../core/checks';
 import type { CheckRecord, JobSummary, Snapshot } from '../../core/types';

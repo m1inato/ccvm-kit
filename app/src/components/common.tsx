@@ -1,19 +1,10 @@
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { relativeTime } from '../../core/status';
 import type { Level, RunResult, Snapshot } from '../../core/types';
 import { act, useApp } from '../api';
 
 export function Dot({ level }: { level: Level | 'err' }) {
   return <span className={`dot ${level}`} />;
-}
-
-export function StatusText({ level, children }: { level: Level; children: ReactNode }) {
-  return (
-    <span className={`status ${level}`}>
-      <Dot level={level} />
-      {children}
-    </span>
-  );
 }
 
 export function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
@@ -65,6 +56,14 @@ export function Ring({ snap }: { snap: Snapshot }) {
 
 export function levelOf(ok: boolean | undefined): Level {
   return ok === undefined ? 'idle' : ok ? 'ok' : 'error';
+}
+
+/** 字节数 → 人看的大小 */
+export function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`;
+  return `${(n / 1024 ** 3).toFixed(1)} GB`;
 }
 
 export function gib(bytes?: number): string {

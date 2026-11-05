@@ -48,7 +48,7 @@ export interface Host {
   loginPathOutput(): Promise<string | undefined>;
   notify(title: string, body: string): void;
   now?: () => number;
-  /** 自带出口核心（M3）。没有时只支持 Clash Verge 模式 */
+  /** 自带出口核心。没有时只支持 Clash Verge 模式 */
   core?: CoreManager;
   /** Clash Verge 外部控制器的密钥（钥匙串）。没有时不能设置密钥 */
   vergeSecret?: SecretStore;
