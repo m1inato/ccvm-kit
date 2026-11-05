@@ -117,7 +117,13 @@ export function issuesFromCheck(rec: CheckRecord | undefined): Issue[] {
 
 export function issuesFromLeak(rec: CheckRecord | undefined): Issue[] {
   if (!rec || rec.ok) return [];
-  return [{ key: 'leak_failed', kind: 'leak_failed', title: '断流测试没有通过', detail: rec.reason ?? '查看检查面板' }];
+  // 断流测试没通过，就不能确认 TUN 停了也不会泄漏：普通检查通过代替不了它。修好之后要重新做一次才解除
+  return [{
+    key: 'leak_failed',
+    kind: 'leak_failed',
+    title: '断流测试没有通过',
+    detail: `${rec.reason ?? '查看检查面板'}。在这之前不开新会话；问题修好之后（快速检查恢复正常也一样），重新做一次断流测试，通过了才会解除。`,
+  }];
 }
 
 /** 自带核心模式下的问题。核心停了 VM 就断网（不会直连），所以这些都算「出错」。 */

@@ -169,6 +169,28 @@ function IssueActions({ issue }: { issue: Issue }) {
           )}
         </div>
       );
+    case 'leak_failed': {
+      const running = snap.vm.status === 'Running';
+      const busy = snap.jobs.some((j) => j.state === 'running' && ['leaktest', 'setup', 'vm-upgrade', 'shares'].includes(j.kind));
+      return (
+        <div className="row">
+          <button className="btn sm" onClick={() => go('/jobs')}>
+            上次的结果
+          </button>
+          <button
+            className="btn sm primary"
+            disabled={!running || busy}
+            title="会短暂停止 VM 里的 TUN；通过后解除对新会话的限制"
+            onClick={() => run(async () => {
+              const id = await act('leaktest');
+              go(`/jobs/${id}`);
+            })}
+          >
+            重新做断流测试
+          </button>
+        </div>
+      );
+    }
     case 'core_missing':
       return (
         <div className="row">

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AlertTracker, deriveLevel, issuesFromCheck, Throttle } from '../core/status';
+import { AlertTracker, deriveLevel, issuesFromCheck, issuesFromLeak, Throttle } from '../core/status';
 import type { CheckRecord, VmInfo } from '../core/types';
 
 const vm: VmInfo = { name: 'ccvm', status: 'Running' };
@@ -84,5 +84,34 @@ describe('alerts', () => {
     expect(th.allow('my-api', 60_000)).toBe(false);
     expect(th.allow('web-app', 60_000)).toBe(true);
     expect(th.allow('my-api', 5 * 60_000)).toBe(true);
+  });
+});
+
+describe('failed leak test', () => {
+  it('blocks until a new leak test passes, and says so', () => {
+    const failed = { kind: 'leak' as const, at: 1, ok: false, reason: '旁路有 3 个包', checks: [], values: {} };
+    const [issue] = issuesFromLeak(failed);
+    expect(issue.kind).toBe('leak_failed');
+    expect(issue.detail).toContain('旁路有 3 个包');
+    expect(issue.detail).toMatch(/重新做一次断流测试/);
+    expect(issuesFromLeak({ ...failed, ok: true, reason: undefined })).toEqual([]);
+  });
+});
+
+describe('TUN policy routes', () => {
+  it('reports lost routes as their own issue, not a generic egress change', () => {
+    const rec: CheckRecord = {
+      kind: 'quick', at: 1, ok: false,
+      checks: [
+        { id: 'vm.tun_up', ok: true, msg: 'TUN 运行中' },
+        { id: 'vm.tun_routes', ok: false, msg: '策略路由没了' },
+        { id: 'vm.egress_reachable', ok: false, msg: '出不去' },
+        { id: 'egress.vm_matches_baseline', ok: false, msg: 'VM 出口 无 ≠ 基线' },
+      ],
+      values: { baseline: '203.0.113.7' },
+    };
+    const issues = issuesFromCheck(rec);
+    expect(issues.map((i) => i.key)).toEqual(['tun_down:routes']);
+    expect(issues[0].title).toBe('TUN 的路由丢了');
   });
 });
