@@ -228,6 +228,7 @@ describe('Controller with the built-in egress core', () => {
       home: f.root,
       uid: 501,
       exec: mac.exec,
+      portInUse: mac.portInUse,
       secrets: { get: () => secret, set: (v) => (secret = v) },
       fetchText: async () => subscription,
     });

@@ -34,6 +34,8 @@ export interface CoreDeps {
   /** 下载订阅：直连，或经 Clash Verge 的 127.0.0.1:7897 */
   fetchText(url: string, viaClashVerge: boolean): Promise<string>;
   now?: () => number;
+  /** 127.0.0.1 上这个端口有没有人在听。默认真的去连；测试换成假的，免得和本机正在运行的核心抢 17897 */
+  portInUse?: (port: number) => Promise<boolean>;
 }
 
 export type StopReason = 'node_changed' | 'node_missing' | 'no_iface' | 'no_dns' | 'user' | 'mode';
@@ -137,7 +139,7 @@ export class CoreManager {
       const lsof = await this.deps.exec('lsof', ['-nP', '-a', '-p', String(service.pid), `-iTCP:${CORE_PORT}`, '-sTCP:LISTEN'], 5000);
       listenerOwned = lsof.code === 0 && lsof.stdout.includes(`:${CORE_PORT}`);
     }
-    const portBusy = await portInUse(CORE_PORT);
+    const portBusy = await this.portBusy();
     const url = this.deps.secrets.get();
     return {
       mihomo: {
@@ -294,10 +296,10 @@ export class CoreManager {
     }
     const status = parseLaunchctlPrint((await this.deps.exec('launchctl', ['print', this.target], 5000)).code, '');
     // 刚停掉的旧进程可能还没释放端口：最多等 3 秒
-    let busy = !status.loaded && (await portInUse(CORE_PORT));
+    let busy = !status.loaded && (await this.portBusy());
     for (let i = 0; busy && i < 6; i++) {
       await new Promise((r) => setTimeout(r, 500));
-      busy = await portInUse(CORE_PORT);
+      busy = await this.portBusy();
     }
     if (busy) {
       throw new Error('127.0.0.1:17897 已经被别的程序占着（多半是 Clash Verge 里的 CCVM 扩展脚本）。先在 Clash Verge 里移除扩展脚本并重新激活订阅');
@@ -390,6 +392,10 @@ export class CoreManager {
     writePrivate(this.configFile, text, 0o600);
     this.state.iface = iface;
     this.state.dnsServers = dnsServers;
+  }
+
+  private portBusy(): Promise<boolean> {
+    return (this.deps.portInUse ?? portInUse)(CORE_PORT);
   }
 
   // ---------------------------------------------------------------- 读数据

@@ -12,6 +12,9 @@ export class FakeMac {
   mihomo: string | undefined = '/opt/homebrew/bin/mihomo';
   version = '1.19.33';
   calls: string[] = [];
+  /** 别的程序（比如没移除的 Clash Verge 扩展脚本）占着 17897。测试从不真的去连本机端口 */
+  otherListener = false;
+  portInUse = async (): Promise<boolean> => this.otherListener;
   exec: ExecFn = async (cmd, args) => {
     this.calls.push([cmd, ...args].join(' '));
     const ok = (stdout = '') => ({ code: 0, stdout, stderr: '' });

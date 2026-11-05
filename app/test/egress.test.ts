@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import YAML from 'yaml';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { CoreManager, sameNode } from '../core/egress';
+import { CoreManager, portInUse, sameNode } from '../core/egress';
 import { FakeMac } from './fakemac';
 import { fetchSubscription } from '../core/fetch';
 import { coreConfigProblems } from '../core/mihomo';
@@ -27,6 +27,7 @@ function manager(): CoreManager {
     home: root,
     uid: 501,
     exec: mac.exec,
+    portInUse: mac.portInUse,
     secrets: { get: () => secret, set: (v) => (secret = v) },
     fetchText: async (url, via) => {
       fetches.push({ url, via });
@@ -188,16 +189,23 @@ describe('CoreManager', () => {
   });
 
   it('refuses to start while something else holds 127.0.0.1:17897', async () => {
-    const server = net.createServer().listen(17897, '127.0.0.1');
+    mac.otherListener = true;
+    const m = manager();
+    await m.setSubscription('https://sub.example.com/s?token=abc');
+    await expect(m.selectNode(NODE_A.name)).rejects.toThrow(/Clash Verge/);
+    expect(mac.loaded).toBe(false);
+  });
+
+  it('the real port probe sees a listener (on a free port, never on 17897)', async () => {
+    const server = net.createServer().listen(0, '127.0.0.1');
     await new Promise((r) => server.once('listening', r));
+    const port = (server.address() as net.AddressInfo).port;
     try {
-      const m = manager();
-      await m.setSubscription('https://sub.example.com/s?token=abc');
-      await expect(m.selectNode(NODE_A.name)).rejects.toThrow(/Clash Verge/);
-      expect(mac.loaded).toBe(false);
+      expect(await portInUse(port)).toBe(true);
     } finally {
-      server.close();
+      await new Promise((r) => server.close(r));
     }
+    expect(await portInUse(port)).toBe(false);
   }, 15_000);
 
   it('remove stops the service and forgets the node but keeps the subscription', async () => {
