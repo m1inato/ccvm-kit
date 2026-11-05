@@ -45,3 +45,17 @@ describe('build info', () => {
     expect(parseBuildInfo(undefined)).toBeUndefined();
   });
 });
+
+describe('macOS packaging for Ghostty automation', () => {
+  it('declares the Apple Events usage string and entitlement (hardened runtime denies silently without them)', async () => {
+    const YAML = (await import('yaml')).default;
+    const cfg = YAML.parse(fs.readFileSync(path.join(__dirname, '..', 'electron-builder.yml'), 'utf8'));
+    expect(cfg.mac.hardenedRuntime).toBe(true);
+    expect(cfg.mac.extendInfo.NSAppleEventsUsageDescription).toMatch(/Ghostty/);
+    for (const key of ['entitlements', 'entitlementsInherit']) {
+      const plist = fs.readFileSync(path.join(__dirname, '..', cfg.mac[key]), 'utf8');
+      expect(plist).toMatch(/<key>com\.apple\.security\.automation\.apple-events<\/key>\s*<true\/>/);
+      expect(plist).toMatch(/<key>com\.apple\.security\.cs\.allow-jit<\/key>\s*<true\/>/);
+    }
+  });
+});

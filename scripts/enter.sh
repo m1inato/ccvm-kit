@@ -27,6 +27,10 @@ done
 [ -z "$session" ] || [ -n "$project" ] || die "--session 需要和 --project 一起用"
 [ -z "$attach" ] || { [ -z "$project" ] && [ -z "$session" ]; } || die "--attach 不能和其他参数一起用"
 
+# Ghostty 把 TERM 设成 xterm-ghostty，limactl shell（ssh）会原样带进 VM；VM 里没有它的 terminfo，
+# tmux 报 missing or unsuitable terminal 起不来、shell 也会乱。进 VM 前换成通用的 xterm-256color（Ghostty 兼容它）
+case "${TERM:-}" in xterm-ghostty|ghostty) export TERM=xterm-256color ;; esac
+
 if [ -n "$attach" ]; then
   require_mac
   [ "$(vm_status)" = Running ] || die "VM 没有运行，没有可以接入的会话"

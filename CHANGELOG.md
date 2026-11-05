@@ -38,6 +38,7 @@
 - 桌面端测试不再连本机真实的 17897：出口核心的端口探测可以注入，测试用假的；在出口核心正在运行的 Mac 上跑 `npm test` 也不会失败（真实探测改在随机空闲端口上测）。
 - 内嵌终端：node-pty 的 `spawn-helper` 丢了执行权限时（解包、拷贝 App 后会报 `posix_spawnp failed`），打包的 `afterPack` 钩子和运行时都会补回 0755，补不上时说清楚原因。
 - 构建追溯：构建时把套件来自的 Git 提交（以及有没有未提交的改动）写进 App 里的 `kit/BUILD`，设置页和导出的验收记录里显示。
+- Ghostty 修复：`enter.sh` 进 VM 前把 Ghostty 的 `TERM=xterm-ghostty` 换成 `xterm-256color`（VM 里没有它的 terminfo，tmux 会起不来）；App 打包加上 Apple Events 授权和 `NSAppleEventsUsageDescription`（hardened runtime 下缺了它们，macOS 不弹「自动化」请求、直接拒绝）。
 - 桌面胶囊修复：窗口跟内容一样大（原来 480×170 的透明窗口会挡住下面窗口的点击）；按钮第一下就能点（`acceptFirstMouse`）；打开胶囊不再隐藏 Dock 图标；显示器变化后拉回屏幕内；胶囊里的操作失败时显示原因。
 
 - 打包不再生成校验文件；桌面端判断节点是否变化改为逐字段比较内容。项目不使用这类哈希，规则见 `AGENTS.md`。

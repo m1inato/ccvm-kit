@@ -85,6 +85,10 @@
 - **一份环境设置**：清代理变量、设 `CCVM_*` 和 `PATH`、调用 `enter.sh` 只写在 App 生成的 `ccvm` 脚本里（`app/core/cli.ts`）。App 自己用的一份在 `~/Library/Application Support/CCVM/bin/ccvm`，用户点「安装」后另写一份到 `~/.local/bin/ccvm`。Terminal / iTerm 运行的 `.command` 文件只有一行 `exec /bin/bash <ccvm> [项目]`；Ghostty 直接运行 `ccvm`。设置或登录 shell 的 `PATH` 变了，两份都自动重写；`~/.local/bin/ccvm` 已存在但不是 CCVM 生成的（第二行不是「由 CCVM 生成，会被覆盖。」），App 不覆盖它。
 - **`ccvm <项目>` 的会话名**：`enter.sh --project P --session auto` 在检查通过之后，以 cc 身份读 `tmux list-sessions`（没有 tmux 服务端时当作没有会话），按 App 的 `nextSessionName` 同一规则取名：项目名里 `[A-Za-z0-9_-]` 以外的字符换成 `_`，接 `-序号`，取第一个空闲的序号。所以外部终端开的会话和内嵌终端开的一样出现在项目页。
 - **Ghostty**：主进程用 `osascript` 执行 AppleScript（Ghostty 1.3.0 起支持）：`new surface configuration`，`command` 设成 `ccvm` 的绝对路径加参数，`initial working directory` 设成家目录，`wait after command` 设为真（检查不过被拒绝时窗口留着，能看到原因），然后 `new window with configuration`。`command` 带参数时 Ghostty 用 `/bin/sh -c` 执行，所以每个参数先按 shell 单引号加引号，整串再转义 `\` 和 `"` 写进 AppleScript。参数只来自校验过的项目名（`[A-Za-z0-9._-]`），仍然照样转义。被拒绝「自动化」权限时提示去 系统设置 → 隐私与安全性 → 自动化 里允许；AppleScript 不可用（Ghostty 低于 1.3.0）时提示升级或改用 `ccvm`。`open -na Ghostty --args -e …` 的行为文档里没有说明，不作为方案。
+- **已核对 Ghostty 源码**：AppleScript 的每一行（`new surface configuration`、`command`、`initial working directory`、`wait after command`、`new window with configuration`）都和 Ghostty.sdef 一致；Ghostty 核心（`src/apprt/embedded.zig`）对这里传进去的 `command` 总是走 shell（`config.command = .{ .shell = cmd }`），所以带空格的路径加单引号没问题。
+- **两个会让 Ghostty 连不进 VM 的原因，已修**：
+  1. Ghostty 把 `TERM` 设成 `xterm-ghostty`，`limactl shell` 会把它带进 VM；VM 里没有它的 terminfo，tmux 起不来（missing or unsuitable terminal）。`enter.sh` 进 VM 前把它换成 `xterm-256color`（对 `ccvm` 和直接运行 `enter.sh` 都生效）。
+  2. App 开着 hardened runtime：没有 `com.apple.security.automation.apple-events` 授权和 Info.plist 里的 `NSAppleEventsUsageDescription`，macOS 不弹「自动化」请求、直接拒绝（-1743）。`electron-builder.yml` 现在带上了两者（`app/build/entitlements.mac.plist`）。已经装好的旧 App 包里没有它们，要重新打包安装才生效。
 - **为什么做不到「在 VM 窗口里按 Cmd+T 自动进 VM」**：Ghostty 的配置不按窗口区分（`command` 对所有新窗口和标签生效），`new_tab` 动作也不能带命令。替代办法：Cmd+T 后输入 `ccvm`；或者这个 Ghostty 只用来开 VM 时，在配置里写 `command = ~/.local/bin/ccvm`。
 - **快捷键 `cmd+shift+t` 新标签并输入 `ccvm`，尚未实测，暂不写进用法**：
 

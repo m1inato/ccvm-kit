@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <!-- electron-builder 默认的三项（Electron 在 hardened runtime 下需要） -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <!-- 用 AppleScript 让 Ghostty 新开窗口。没有它，hardened runtime 下 macOS 不弹「自动化」请求，直接拒绝（-1743） -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+  </dict>
+</plist>

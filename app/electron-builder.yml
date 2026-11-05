@@ -20,6 +20,10 @@ mac:
     - target: dmg
       arch: [arm64]
   hardenedRuntime: true
+  # 控制 Ghostty（AppleScript）要 apple-events 授权和下面的用途说明，缺一个 macOS 就不弹「自动化」请求、直接拒绝
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
+    NSAppleEventsUsageDescription: CCVM 用 AppleScript 让 Ghostty 新开一个窗口，进入 VM 里的 cc。
     LSUIElement: true
     NSHumanReadableCopyright: CCVM

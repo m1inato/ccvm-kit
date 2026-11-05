@@ -35,6 +35,7 @@ case "$1" in
     [ -z "${STUB_EDIT_FILE-}" ] || printf '%s' "$4" > "$STUB_EDIT_FILE"
     exit "${STUB_EDIT_RC:-0}" ;;
   shell)
+    printf 'TERM=%s\n' "${TERM-}" >> "$STUB_LOG"
     case "$*" in
       *"tmux list-sessions"*)
         [ -n "${STUB_TMUX_SESSIONS+x}" ] || { echo "no server running" >&2; exit 1; }
@@ -398,6 +399,18 @@ class EventTests(ScriptHarness):
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("new-session", self.log.read_text())
         self.assertNotIn("list-sessions", self.log.read_text())
+
+    def test_enter_replaces_the_ghostty_terminal_type(self):
+        # VM 里没有 xterm-ghostty 的 terminfo：tmux 会起不来
+        self.run_script("enter.sh", "--attach", "my-api-1", TERM="xterm-ghostty")
+        self.assertIn("TERM=xterm-256color", self.log.read_text())
+        self.assertNotIn("TERM=xterm-ghostty", self.log.read_text())
+        self.log.unlink()
+        self.run_script("enter.sh", "--project", "my-api", "--session", "auto", TERM="xterm-ghostty")
+        self.assertNotIn("TERM=xterm-ghostty", self.log.read_text())
+        self.log.unlink()
+        self.run_script("enter.sh", "--attach", "my-api-1", TERM="screen-256color")
+        self.assertIn("TERM=screen-256color", self.log.read_text())   # 别的终端类型不动
 
     def test_enter_rejects_bad_session_arguments(self):
         for args in [["--attach", "a b"], ["--session", "x"], ["--session", "auto"], ["--attach", "a", "--project", "p"], ["--project", "p", "--session", "a.b"]]:

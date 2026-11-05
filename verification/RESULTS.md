@@ -27,7 +27,7 @@
 
 | # | 项目 | 结果 |
 |---|---|---|
-| 1 | 设置选 Ghostty 后「在终端打开」开出 Ghostty 窗口，先过检查再进 cc；拒绝「自动化」权限时界面有提示 | 未执行（没有 Mac / Ghostty） |
+| 1 | 设置选 Ghostty 后「在终端打开」开出 Ghostty 窗口，先过检查再进 cc；拒绝「自动化」权限时界面有提示 | 未执行（没有 Mac / Ghostty）。已修两个会让它失败的原因（`TERM=xterm-ghostty`、缺 Apple Events 授权），要用**重新打包**的 App 验证 |
 | 2 | Ghostty 里 Cmd+T 输入 `ccvm my-api`，会话出现在 App 项目页 | 未执行（没有 Mac / Ghostty） |
 | 3 | 出口出错时 `ccvm my-api` 被拒绝，`ccvm -a <已有会话>` 能接入 | 未执行（没有 Mac）；脚本层由 `test_events.py` 覆盖 |
 | 4 | `keybind = chain=text:ccvm\n` 的文字进新标签还是原标签 | 未执行（没有 Ghostty）；README 暂不推荐这条 |
