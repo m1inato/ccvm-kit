@@ -20,7 +20,7 @@ Mac 的 127.0.0.1:17897 → CC-VM-FIXED → 你指定的具体节点
 
 网络设计与历史修复见 [设计说明](docs/design.md)。验证范围与可运行测试见 [验证说明](verification/RESULTS.md)。
 
-桌面端（菜单栏、桌面胶囊和主窗口）在 [`app/`](app/README.md)，它只调用这里的脚本；脚本永远可以脱离 App 单独使用。实现选择与对设计方案的修订见 [桌面端说明](docs/desktop-app.md)。
+桌面端（菜单栏、桌面胶囊和主窗口）在 [`app/`](app/README.md)，它只调用这里的脚本；脚本永远可以脱离 App 单独使用。工作方式与安全设计见 [桌面端说明](docs/desktop-app.md)。
 
 ## 前置条件
 
@@ -208,7 +208,7 @@ bash scripts/package.sh HEAD
 
 隔离覆盖无 sudo 的 `cc` 用户及其子进程。VM root、内核漏洞或宿主被入侵不在防护范围内。此方案允许公网 TCP，并非域名白名单，也不保证第三方账号状态。普通 UDP / QUIC、应用端口转发和依赖转发链的 Docker 网络不在支持范围内。
 
-排障、手动验收场景与升级说明见 [运维说明](docs/operations.md)。原始设计审计见 [归档](docs/audit-v2.1.md)。
+排障、手动验收场景与升级说明见 [运维说明](docs/operations.md)。
 
 ## 许可证
 
