@@ -135,7 +135,7 @@ export function reportMarkdown(snap: Snapshot, now: number): string {
   const lines = [
     '# CCVM 验收记录',
     '',
-    `导出时间：${fmt(now)} · 套件 ${snap.kitVersion} · App ${snap.appVersion}`,
+    `导出时间：${fmt(now)} · 套件 ${snap.kitVersion}${snap.kitBuild ? `（提交 ${snap.kitBuild.commit}${snap.kitBuild.dirty ? '，有未提交的改动' : ''}）` : ''} · App ${snap.appVersion}`,
     '',
     `- 状态：${snap.headline}`,
     `- 出口基线：${snap.egress.baseline ?? '无'}`,

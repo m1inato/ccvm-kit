@@ -118,6 +118,7 @@ export class Controller extends EventEmitter {
   private path?: string;
   private projectsError?: string;
   private kitVersion: string;
+  private kitBuild?: Snapshot['kitBuild'];
   private now: () => number;
   private coreStatus?: CoreStatus;
   private coreBusy = false;
@@ -154,6 +155,7 @@ export class Controller extends EventEmitter {
     this.jobs = new JobStore(path.join(host.dataDir, 'jobs'), host.kitDir, this.now);
     this.vm = { name: this.settings.vmName, status: 'Unknown' };
     this.kitVersion = (readText(path.join(host.kitDir, 'VERSION')) ?? 'unknown').trim();
+    this.kitBuild = parseBuildInfo(readText(path.join(host.kitDir, 'BUILD')));
     this.alerts.update(this.issues()); // 上次已经通知过的问题，重启 App 后不重复通知
   }
 
@@ -933,6 +935,7 @@ export class Controller extends EventEmitter {
         jobs: path.join(this.host.dataDir, 'jobs'),
       },
       kitVersion: this.kitVersion,
+      kitBuild: this.kitBuild,
       appVersion: this.host.appVersion,
     };
   }
@@ -959,6 +962,14 @@ export class Controller extends EventEmitter {
   private file(name: string): string {
     return path.join(this.host.dataDir, name);
   }
+}
+
+/** build/kit/BUILD：commit=… / dirty=0|1 / built=…；格式不对就当没有 */
+export function parseBuildInfo(text: string | undefined): Snapshot['kitBuild'] {
+  if (!text) return undefined;
+  const kv = Object.fromEntries(text.split('\n').map((l) => l.split('=')).filter((p) => p.length === 2)) as Record<string, string>;
+  if (!/^[0-9a-f]{7,40}$/.test(kv.commit ?? '')) return undefined;
+  return { commit: kv.commit, dirty: kv.dirty === '1', built: kv.built ?? '' };
 }
 
 /** 只有读到了、而且确实缺，才提示补装；读不到就不提示（这不是安全判断，只是功能提示） */

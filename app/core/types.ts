@@ -301,6 +301,8 @@ export interface Snapshot {
   settings: Settings;
   paths: { kit: string; state: string; baselineFile: string; jobs: string };
   kitVersion: string;
+  /** 构建时记下的来源提交（build/kit/BUILD）；从源码运行时没有 */
+  kitBuild?: { commit: string; dirty: boolean; built: string };
   appVersion: string;
 }
 

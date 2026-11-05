@@ -21,4 +21,11 @@ for (const f of files) {
   fs.copyFileSync(path.join(repo, f), dest);
   fs.chmodSync(dest, fs.statSync(path.join(repo, f)).mode & 0o777);
 }
-console.log(`kit: ${files.length} files → ${path.relative(appDir, out)}`);
+// 构建追溯：这个 App 里的套件来自哪个提交、有没有未提交的改动。App 在设置页和验收记录里显示它
+const git = (...args) => execFileSync('git', ['-C', repo, ...args]).toString().trim();
+const dirty = git('status', '--porcelain', '--untracked-files=no', '--', 'VERSION', 'scripts', 'guest', 'config', 'app') !== '';
+fs.writeFileSync(
+  path.join(out, 'BUILD'),
+  `commit=${git('rev-parse', '--short=12', 'HEAD')}\ndirty=${dirty ? 1 : 0}\nbuilt=${new Date().toISOString()}\n`,
+);
+console.log(`kit: ${files.length} files → ${path.relative(appDir, out)}${dirty ? '（有未提交的改动）' : ''}`);

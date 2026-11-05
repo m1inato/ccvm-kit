@@ -7,6 +7,8 @@ files:
   - dist/**
   - dist-electron/**
   - package.json
+# node-pty 的 spawn-helper 解包后补回执行权限（否则内嵌终端报 posix_spawnp failed）
+afterPack: build/after-pack.cjs
 extraResources:
   - from: build/kit
     to: kit

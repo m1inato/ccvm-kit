@@ -539,6 +539,9 @@ function General() {
       </div>
       <p className="tiny faint">
         App {snap.appVersion} · 套件 {snap.kitVersion}
+        {snap.kitBuild
+          ? ` · 提交 ${snap.kitBuild.commit}${snap.kitBuild.dirty ? '（构建时有未提交的改动）' : ''} · 构建于 ${snap.kitBuild.built.slice(0, 16).replace('T', ' ')}`
+          : ' · 从源码运行'}
       </p>
     </div>
   );
