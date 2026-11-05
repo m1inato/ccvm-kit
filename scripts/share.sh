@@ -39,7 +39,7 @@ require_mac
 step share.check "检查 $count 个共享路径"
 for p in "${paths[@]+"${paths[@]}"}"; do
   prob="$(share_path_problem "$p")"
-  [ -z "$prob" ] || fail_check share.paths "$prob。没有改动 VM。"
+  [ -z "$prob" ] || fail_check share.paths "${prob}。没有改动 VM。"
 done
 pass share.paths "$count 个共享路径都可以共享"
 value share_count "$count"

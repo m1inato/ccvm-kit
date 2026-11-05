@@ -161,6 +161,44 @@ class ShareTests(ScriptHarness):
         for verb in ["stop", "edit", "start", "shell"]:
             self.assertFalse(any(c.split()[0] == verb for c in self.log.read_text().splitlines()), verb)
 
+    def test_bindfs_install_drops_inherited_proxy_environment(self):
+        self.stub("id", "echo 0")
+        # 故意让所有安装尝试失败，在任何 root 文件写入之前结束。
+        self.stub("apt-get", 'printf "%s\\n" "$*" >> "$STUB_APT_CALLS"\n'
+                  'env | sed -n -E "/^((HTTP|HTTPS|ALL|NO)_PROXY|(http|https|all|no)_proxy|DEBIAN_FRONTEND)=/p" '
+                  '>> "$STUB_APT_ENV"\nexit 1')
+        calls = self.root / "apt-calls"
+        apt_env = self.root / "apt-env"
+        proxies = dict.fromkeys(("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+                                 "http_proxy", "https_proxy", "all_proxy", "no_proxy"),
+                                "http://192.168.5.2:7897")
+        result = subprocess.run([BASH_EXEC, str(KIT / "guest/shares.sh"), "apply", "501", "20", "test"],
+                                env=self.env | proxies | {"STUB_APT_CALLS": str(calls), "STUB_APT_ENV": str(apt_env)},
+                                text=True, capture_output=True, timeout=30)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("FAIL share.guest 安装 bindfs 失败", result.stdout)
+        self.assertEqual(calls.read_text().splitlines(), ["install -y --no-install-recommends bindfs", "update"])
+        for key in proxies:
+            self.assertNotRegex(apt_env.read_text(), rf"(?m)^{key}=")
+        self.assertIn("DEBIAN_FRONTEND=noninteractive", apt_env.read_text())
+
+    def test_guest_view_sets_the_bindfs_mount_subtype(self):
+        text = (KIT / "guest/shares.sh").read_text()
+        program = re.search(r"<<'UPEOF'\n(.*?)\nUPEOF", text, re.S).group(1)
+        program = program.replace("LIST=/etc/ccvm/shares.list", 'LIST="$STUB_SHARE_LIST"')
+        share_list = self.write("shares.list", "501 20\nproject\n")
+        for command in ["install", "chown", "chmod"]:
+            self.stub(command, "exit 0")
+        self.stub("mountpoint", '[ "$2" = /mnt/ccvm-raw/project ]')
+        self.stub("bindfs", 'printf "%s\\n" "$@" > "$STUB_LOG"')
+        result = subprocess.run([BASH_EXEC, "-s"], input=program,
+                                env=self.env | {"STUB_SHARE_LIST": str(share_list)},
+                                text=True, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = self.log.read_text().splitlines()
+        self.assertIn("subtype=bindfs", args[args.index("-o") + 1].split(","))
+        self.assertEqual(args[-2:], ["/mnt/ccvm-raw/project", "/home/cc/mac/project"])
+
     # ------------------------------------------------------------------ selfcheck mounts_ok
     def mounts_ok(self, findmnt_out, shares):
         text = (KIT / "guest/selfcheck.sh").read_text()

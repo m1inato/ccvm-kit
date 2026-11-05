@@ -2,20 +2,21 @@
 
 ## 2.3.0 开发中：共享文件夹、传文件、`ccvm` 与 Ghostty（2026-11-05）
 
-这一轮在 Linux 容器里完成（没有 Mac、Lima、Ghostty），自动化检查全部通过；**上机验收一项都还没有做**，下表逐项记为「未执行」，原因相同：容器里没有 macOS、Lima 和 Ghostty。上机后把结果填在「结果」列，失败项写明原因。
+最初的开发检查在 Linux 容器里完成。2026-11-05 补充了共享文件夹的 Mac / Lima 实机验收，结果见下表；其余上机项目仍未执行。
 
 | 环境 | 检查 | 结果 |
 |---|---|---|
 | Linux 容器 | `bash verification/run.sh`：Bash 语法、Clash 脚本用例、Python 用例（含共享路径规则、`share.sh apply` 的 `limactl edit` 表达式、实际挂载集合核对、`files.sh` 路径校验与 tar 管道、`mounts_ok`、`enter.sh --session auto`）、发布内容检查 | 通过 |
 | Linux 容器 | `cd app && npm run typecheck && npm test && npm run build`（含 `sharePathProblem` 与 `lib.sh` 逐例对照、控制器端到端驱动真实 `share.sh apply`、`ccvm` 脚本生成） | 通过 |
 | Linux 容器 | `guest/files.sh` 在本机以 cc 用户直接运行：列目录、`~/x -> /etc` 被拒、`check-file` 拒绝符号链接、删除链接不跟随 | 通过 |
+| macOS 本地（2026-11-05） | `bash verification/run.sh`：69 项 Python 用例、Clash 脚本用例、Bash 语法及发布内容检查；新增安装 bindfs 时清理继承代理环境、设置挂载类型的回归测试 | 通过 |
 
 ### 共享文件夹与传文件（上机）
 
 | # | 项目 | 结果 |
 |---|---|---|
-| 1 | 共享一个测试文件夹并应用；VM 重启后完整验收、断流测试都通过 | 未执行（没有 Mac） |
-| 2 | VM 里以 cc 在 `/home/cc/mac/<名字>` 新建、修改、删除文件，Mac 上能看到；Mac 上新建的文件在 VM 里属主是 cc | 未执行（没有 Mac） |
+| 1 | 应用共享文件夹；VM 重启后完整验收、断流测试都通过 | 通过（2026-11-05）；3 个共享目录，服务开机自动启动，完整验收与断流测试通过 |
+| 2 | VM 里以 cc 在 `/home/cc/mac/<名字>` 新建、修改、删除文件，Mac 上能看到；Mac 上新建的文件在 VM 里属主是 cc | 通过（2026-11-05）；3 个目录均用临时文件验证双向创建、修改、删除及属主映射，测试后清理 |
 | 3 | VM 里访问没共享的 Mac 路径，访问不到 | 未执行（没有 Mac） |
 | 4 | 手动在 Lima 实例配置里多加一个挂载，完整验收变红（`lima.effective_config`） | 未执行（没有 Mac）；脚本层由 `test_shares.py` 用桩 limactl 覆盖 |
 | 5 | 共享 `~/Documents`、`~/Desktop` 时 macOS 的隐私授权由谁申请（limactl 还是 App） | 未执行（没有 Mac） |

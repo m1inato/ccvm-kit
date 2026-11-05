@@ -51,6 +51,8 @@ case "${1:-}" in
     [[ "$uid" =~ ^[0-9]+$ && "$gid" =~ ^[0-9]+$ ]] || { echo "FAIL share.guest uid / gid 必须是数字"; exit 1; }
     for name in "$@"; do valid_name "$name" || { echo "FAIL share.guest 无效的名字：$name"; exit 1; }; done
     if ! command -v bindfs >/dev/null 2>&1; then
+      # Lima 的 /etc/environment 可能带有宿主代理；已部署的 VM 安装包应经现有 TUN。
+      unset HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy
       export DEBIAN_FRONTEND=noninteractive
       apt-get install -y --no-install-recommends bindfs >&2 \
         || { apt-get update >&2 && apt-get install -y --no-install-recommends bindfs >&2; } \
@@ -78,7 +80,7 @@ while IFS= read -r name; do
   if ! mountpoint -q "$RAW/$name"; then echo "没有等到 $RAW/$name" >&2; rc=1; continue; fi
   mountpoint -q "$VIEW/$name" && continue
   install -d -o cc -g cc -m 0700 "$VIEW/$name" || { rc=1; continue; }
-  bindfs -o allow_other --force-user=cc --force-group=cc --create-for-user="$uid" --create-for-group="$gid" \
+  bindfs -o allow_other,subtype=bindfs --force-user=cc --force-group=cc --create-for-user="$uid" --create-for-group="$gid" \
     --chown-ignore --chgrp-ignore "$RAW/$name" "$VIEW/$name" || rc=1
 done < <(tail -n +2 "$LIST")
 exit "$rc"

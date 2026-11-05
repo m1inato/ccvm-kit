@@ -22,12 +22,14 @@
 - 共享文件夹（读写，**有意的设计降级**，默认关闭）：`$STATE/shares.txt` 是唯一来源；新增 `share.sh status|apply`（`limactl edit` 写挂载、重启 VM）与 VM 内 `guest/shares.sh`（bindfs 把 `/mnt/ccvm-raw/<名字>` 映射到 `/home/cc/mac/<名字>`）。`lima.effective_config` 改为要求挂载集合正好等于 `shares.txt`；`vm.no_host_mounts` 改为「没有未经允许的宿主目录挂载」，`check.sh` 完整验收把共享名传给 VM。禁止共享家目录、敏感目录和 CCVM 自己的目录。说明见 `docs/desktop-app.md`。
 - 传文件：新增 `files.sh list|mkdir|rm|push|pull`（以 cc 身份，只能碰 `/home/cc`，下载只支持单个普通文件）。
 - 桌面端：设置新增「共享文件夹」分页，顶栏 / 胶囊 / 链路面板 / 验收记录常驻「共享 N 个文件夹 · 读写」；新增「文件」页（浏览、上传、拖入、新建、删除、下载）。
+- 共享文件夹修复：安装 bindfs 前清除 Lima 继承的代理环境变量，经现有 TUN 下载；显式设置 `subtype=bindfs`，使实际挂载类型与验收一致。
+- 修复 macOS Bash 3.2 下共享路径错误提示紧跟中文标点时的变量解析问题；新增代理环境清理与挂载类型的回归测试。
 - 桌面端修复：`refreshVm` 在拿到登录 shell 的 PATH 之前不再运行，较早发起的结果也不会覆盖较新的（原来会偶发地把 VM 错报成「找不到 limactl」）。
 - 桌面胶囊修复：窗口跟内容一样大（原来 480×170 的透明窗口会挡住下面窗口的点击）；按钮第一下就能点（`acceptFirstMouse`）；打开胶囊不再隐藏 Dock 图标；显示器变化后拉回屏幕内；胶囊里的操作失败时显示原因。
 
 - 打包不再生成校验文件；桌面端判断节点是否变化改为逐字段比较内容。项目不使用这类哈希，规则见 `AGENTS.md`。
 
-本次改动在 Linux 容器中验证；尚未在 Mac / Lima / Clash Verge 实机上运行。
+桌面端最初在 Linux 容器中验证；共享文件夹修复已于 2026-11-05 在 Mac / Lima 实机验证，范围见 `verification/RESULTS.md`。
 
 ## 2.2.0 — 2026-11-04
 
