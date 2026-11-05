@@ -141,10 +141,11 @@ function initial(scenario: string): Snapshot {
       vmName: 'ccvm', limaHome: '~/.lima-ccvm', stateDir: '~/Library/Application Support/CCVM/state', checkIntervalMin: 10,
       showCapsule: true, terminalApp: 'Terminal', launchAtLogin: true, egressMode: 'builtin', nodeName: '示例节点 · 东京 01',
       claudeLoginConfirmed: true, welcomeDone: true, hooksEnabled: true, sharedFolders: [], sharesEnabled: false,
-      latencyTestUrl: 'https://www.gstatic.com/generate_204', theme: 'system',
+      latencyTestUrl: 'https://www.gstatic.com/generate_204', theme: 'system', clashController: '',
     },
     shares: { applied: [], pendingApply: false, problems: {} },
     vmPackages: { level: 1, target: 1, tmuxInstalled: true, needsUpgrade: false },
+    clashController: { address: '', secretSet: false },
     paths: { kit: '/Applications/CCVM.app/Contents/Resources/kit', state: '~/Library/Application Support/CCVM/state', baselineFile: 'expected-ip.txt', jobs: 'jobs' },
     kitVersion: '2.3.0', appVersion: '0.1.0',
   };
@@ -165,6 +166,8 @@ function initial(scenario: string): Snapshot {
     snap.captions = [{ id: 1, at: now, level: 'error', text: `出口变成了 ${NEW}，不是记住的 ${BASE}。正在跑的会话不受影响，新会话先不开。`, sticky: true, issueKey: snap.issues[0].key }];
   }
   if (scenario === 'cv') {
+    snap.settings = { ...snap.settings, clashController: '127.0.0.1:9097' };
+    snap.clashController = { address: '127.0.0.1:9097', secretSet: true };
     snap.settings = { ...snap.settings, egressMode: 'clash-verge' };
     snap.core = undefined;
   }
@@ -394,6 +397,21 @@ export function createMockBridge(): Bridge {
     setCoreOptions: async (o: { autoUpdate?: boolean; viaClashVerge?: boolean }) =>
       update({ core: { ...snap.core!, subscription: { ...snap.core!.subscription, ...Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) } } }),
     coreConnections: async () => CONNS,
+    setClashController: async (o: { address: string; secret?: string | null }) => {
+      const secretSet = o.secret === undefined ? snap.clashController.secretSet : !!o.secret;
+      update({ settings: { ...snap.settings, clashController: o.address }, clashController: { address: o.address, secretSet } });
+      return snap.settings;
+    },
+    testClashController: async () => ({ version: 'v1.19.15 (演示)' }),
+    clashConnections: async () => {
+      const node = snap.settings.nodeName || '示例节点 · 东京 01';
+      // 演示里故意放一条没走 CC-VM-FIXED 的连接，看标红的样子
+      const connections = [
+        ...CONNS.map((c) => ({ ...c, inbound: 'cc-vm-in', chains: [node, 'CC-VM-FIXED'] })),
+        { ...CONNS[0], id: 'bad', destination: '93.184.215.14:443', inbound: 'cc-vm-in', chains: ['DIRECT'] },
+      ];
+      return { connections, node, offPath: ['bad'] };
+    },
     latencyTest: async () => {
       await sleep(1200);
       const latency = { [NODES[0].name]: 86, [NODES[1].name]: 92, [NODES[2].name]: 121, [NODES[3].name]: null };

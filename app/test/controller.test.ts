@@ -151,6 +151,28 @@ describe('Controller end to end', () => {
     expect(f.calls()).not.toContain('rename-session');
   });
 
+  it('Clash Verge controller: address validated, secret kept out of settings and snapshots', () => {
+    let stored: string | undefined;
+    notes = [];
+    c = new Controller({
+      kitDir: KIT, dataDir: f.data, appVersion: 'test', home: f.root, user: 'tester',
+      loginPathOutput: async () => undefined, notify: () => undefined,
+      vergeSecret: { get: () => stored, set: (v) => (stored = v) },
+    });
+    expect(() => c.setClashController({ address: '192.168.1.2:9097' })).toThrow(/回环/);
+    c.setClashController({ address: '127.0.0.1:9097', secret: 'top-secret-xyz' });
+    expect(stored).toBe('top-secret-xyz');
+    const snap = c.snapshot();
+    expect(snap.clashController).toEqual({ address: '127.0.0.1:9097', secretSet: true });
+    expect(JSON.stringify(snap)).not.toContain('top-secret-xyz');
+    expect(fs.readFileSync(path.join(f.data, 'settings.json'), 'utf8')).not.toContain('top-secret-xyz');
+    c.setClashController({ address: '127.0.0.1:9097' }); // 不传密钥：保持
+    expect(stored).toBe('top-secret-xyz');
+    c.setClashController({ address: '', secret: null });
+    expect(stored).toBeUndefined();
+    expect(c.snapshot().clashController).toEqual({ address: '', secretSet: false });
+  });
+
   it('settings: terminal app is one of Terminal / iTerm / Ghostty', () => {
     c = make();
     expect(c.updateSettings({ terminalApp: 'Ghostty' }).terminalApp).toBe('Ghostty');

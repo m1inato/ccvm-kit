@@ -6,7 +6,8 @@ import path from 'node:path';
 import { latestChecks } from './events';
 import { limaEnv, parseLoginPath, scriptEnv, validateSettingsPaths } from './env';
 import { JobStore } from './jobs';
-import type { CoreManager } from './egress';
+import type { CoreManager, SecretStore } from './egress';
+import { controllerAddressProblem, readVergeConnections, vergeGet, type VergeConnections } from './clashVerge';
 import { isIPv4, gitUrlProblem, parseLimaList, renderClashScript, toProject } from './parsers';
 import { DEFAULT_LATENCY_URL, latencyUrlProblem } from './mihomo';
 import { MATRIX } from './report';
@@ -49,6 +50,8 @@ export interface Host {
   now?: () => number;
   /** 自带出口核心（M3）。没有时只支持 Clash Verge 模式 */
   core?: CoreManager;
+  /** Clash Verge 外部控制器的密钥（钥匙串）。没有时不能设置密钥 */
+  vergeSecret?: SecretStore;
 }
 
 interface Persisted {
@@ -90,6 +93,7 @@ export function defaultSettings(home: string, dataDir: string): Settings {
     sharesEnabled: false,
     latencyTestUrl: DEFAULT_LATENCY_URL,
     theme: 'system',
+    clashController: '',
   };
 }
 
@@ -121,6 +125,8 @@ export class Controller extends EventEmitter {
   private disposed = false;
   private pollingEvents = false;
   private vmSeq = 0;
+  /** 钥匙串里有没有外部控制器密钥：启动时读一次，之后跟着设置走（快照很频繁，不每次解密） */
+  private vergeSecretSet = false;
   /** 「做完了」：同一项目 5 分钟内只弹一次；「在等你」：同一项目 1 分钟内一次 */
   private doneThrottle = new Throttle(5 * 60_000);
   private waitThrottle = new Throttle(60_000);
@@ -140,7 +146,11 @@ export class Controller extends EventEmitter {
     this.settings.sharesEnabled = this.settings.sharesEnabled === true;
     if (latencyUrlProblem(this.settings.latencyTestUrl)) this.settings.latencyTestUrl = DEFAULT_LATENCY_URL;
     if (!THEMES.includes(this.settings.theme)) this.settings.theme = 'system';
+    if (typeof this.settings.clashController !== 'string' || (this.settings.clashController && controllerAddressProblem(this.settings.clashController))) {
+      this.settings.clashController = '';
+    }
     this.state = readJson<Persisted>(this.file('app-state.json')) ?? {};
+    this.vergeSecretSet = !!host.vergeSecret?.get();
     this.jobs = new JobStore(path.join(host.dataDir, 'jobs'), host.kitDir, this.now);
     this.vm = { name: this.settings.vmName, status: 'Unknown' };
     this.kitVersion = (readText(path.join(host.kitDir, 'VERSION')) ?? 'unknown').trim();
@@ -517,6 +527,40 @@ export class Controller extends EventEmitter {
     this.save();
   }
 
+  // ------------------------------------------------------------------ Clash Verge 外部控制器（只读）
+  /** 地址只能经这里改（要校验）；secret 不传表示不改，null 表示清除。密钥不进设置文件 */
+  setClashController(opts: { address: string; secret?: string | null }): Settings {
+    const address = String(opts.address ?? '').trim();
+    if (address) {
+      const problem = controllerAddressProblem(address);
+      if (problem) throw new Error(problem);
+    }
+    if (opts.secret !== undefined) {
+      if (!this.host.vergeSecret) throw new Error('这个环境不能保存密钥');
+      if (opts.secret === null || opts.secret === '') this.host.vergeSecret.set(undefined);
+      else {
+        if (opts.secret.length > 512 || /[\r\n\0]/.test(opts.secret)) throw new Error('密钥格式不对');
+        this.host.vergeSecret.set(opts.secret);
+      }
+      this.vergeSecretSet = opts.secret !== null && opts.secret !== '';
+    }
+    return this.saveSettings({ ...this.settings, clashController: address });
+  }
+
+  private vergeAddress(): string {
+    if (!this.settings.clashController) throw new Error('还没有填 Clash Verge 外部控制器的地址');
+    return this.settings.clashController;
+  }
+
+  async testClashController(): Promise<{ version: string }> {
+    const v = (await vergeGet(this.vergeAddress(), this.host.vergeSecret?.get(), '/version')) as { version?: unknown };
+    return { version: typeof v?.version === 'string' ? v.version : '未知' };
+  }
+
+  clashConnections(): Promise<VergeConnections> {
+    return readVergeConnections(this.vergeAddress(), this.host.vergeSecret?.get(), this.settings.nodeName);
+  }
+
   // ------------------------------------------------------------------ 共享文件夹
   private shareContext() {
     return { home: this.host.home, limaHome: this.settings.limaHome, stateDir: this.settings.stateDir, kitDir: this.host.kitDir };
@@ -872,6 +916,7 @@ export class Controller extends EventEmitter {
       captions: this.captions,
       shares: this.sharesState(),
       vmPackages: vmPackagesState(this.state.vmPackages),
+      clashController: { address: this.settings.clashController, secretSet: this.vergeSecretSet },
       matrix: this.state.matrix ?? {},
       settings: this.settings,
       paths: {

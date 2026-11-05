@@ -137,6 +137,7 @@ function ChainPanel({ snap }: { snap: Snapshot }) {
 function ConnectionsPanel({ snap }: { snap: Snapshot }) {
   const { go } = useApp();
   if (snap.settings.egressMode === 'builtin' && snap.core?.service.running) return <CoreConnections snap={snap} />;
+  if (snap.settings.egressMode === 'clash-verge' && snap.clashController.address) return <VergeConnectionsPanel snap={snap} />;
   return (
     <>
       <div className="row">
@@ -146,7 +147,7 @@ function ConnectionsPanel({ snap }: { snap: Snapshot }) {
       <p className="small muted">
         {snap.settings.egressMode === 'builtin'
           ? '核心运行时，这里直接经本机 socket 读它的连接。'
-          : '用 Clash Verge 时，连接列表要读它的外部控制器（还没做）；App 只读，不改它的配置。改用自带核心可以直接看。'}
+          : '用 Clash Verge 时，要在 设置 → 网络出口 里填上它的外部控制器（只读，不改它的配置）。Clash Verge 默认没有打开外部控制器。'}
       </p>
       <div className="callout small">
         也可以在 Clash Verge 的「连接」里核对：每条来自 VM 的连接都应是 <code>cc-vm-in → CC-VM-FIXED → {snap.settings.nodeName || '你的节点'}</code>。
@@ -164,64 +165,104 @@ function bytes(n: number): string {
   return `${(n / 1024 ** 2).toFixed(1)} MB`;
 }
 
-/** 自带核心的实时连接：按目标汇总，核对每条都只经过选定节点 */
-function CoreConnections({ snap }: { snap: Snapshot }) {
-  const [conns, setConns] = useState<CoreConnection[] | null>(null);
+/** 每 3 秒读一次（面板开着时） */
+function usePolled<T>(load: () => Promise<T>): { data: T | null; err: string | null } {
+  const [data, setData] = useState<T | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
-    const load = () =>
-      act('coreConnections')
-        .then((c) => alive && (setConns(c), setErr(null)))
+    const tick = () =>
+      load()
+        .then((d) => alive && (setData(d), setErr(null)))
         .catch((e) => alive && setErr(errorText(e)));
-    void load();
-    const t = setInterval(load, 3000);
+    void tick();
+    const t = setInterval(tick, 3000);
     return () => {
       alive = false;
       clearInterval(t);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const node = snap.core?.node?.name ?? '';
-  if (err) return <p className="small err-text">读不到核心的连接：{err}</p>;
-  if (!conns) return <p className="small muted">读取中…</p>;
-  const groups = new Map<string, { total: number; count: number; chains: Set<string> }>();
+  return { data, err };
+}
+
+/** 连接按目标汇总显示；offPath 里的连接（链路不对）标红。两种出网方式共用 */
+function ConnectionList({ conns, offPath, okSummary, badSummary }: { conns: CoreConnection[]; offPath: Set<string>; okSummary: string; badSummary: string }) {
+  const groups = new Map<string, { total: number; count: number; chains: Set<string>; bad: boolean }>();
   for (const c of conns) {
     const key = c.host || c.destination || '?';
-    const g = groups.get(key) ?? { total: 0, count: 0, chains: new Set<string>() };
+    const g = groups.get(key) ?? { total: 0, count: 0, chains: new Set<string>(), bad: false };
     g.total += c.upload + c.download;
     g.count += 1;
     g.chains.add(c.chains.join(' → ') || '（无）');
+    g.bad ||= offPath.has(c.id);
     groups.set(key, g);
   }
-  const offPath = conns.filter((c) => c.chains.length !== 1 || c.chains[0] !== node);
-  const rows = [...groups.entries()].sort((a, b) => b[1].total - a[1].total);
+  // 有问题的排在最前面
+  const rows = [...groups.entries()].sort((a, b) => Number(b[1].bad) - Number(a[1].bad) || b[1].total - a[1].total);
   return (
     <>
-      <p className={`small ${offPath.length ? 'err-text' : 'muted'}`}>
-        {conns.length === 0
-          ? '现在没有连接。'
-          : offPath.length
-            ? `${offPath.length} 条连接没有只经过选定节点，请检查核心配置。`
-            : `现在 ${conns.length} 条连接，全部经过选定节点「${node}」出去，没有直连。`}
-      </p>
+      <p className={`small ${offPath.size ? 'err-text' : 'muted'}`}>{conns.length === 0 ? '现在没有连接。' : offPath.size ? badSummary : okSummary}</p>
       <div className="chain">
-        {rows.slice(0, 40).map(([dest, g]) => {
-          const ok = g.chains.size === 1 && g.chains.has(node);
-          return (
-            <div className="chain-row" key={dest} title={[...g.chains].join('\n')}>
-              <Dot level={ok ? 'ok' : 'error'} />
-              <div className="label">
-                <b className="mono" style={{ fontSize: 12 }}>{dest}</b>
-                <div>
-                  {g.count} 条 · {bytes(g.total)}
-                </div>
+        {rows.slice(0, 40).map(([dest, g]) => (
+          <div className="chain-row" key={dest} title={[...g.chains].join('\n')}>
+            <Dot level={g.bad ? 'error' : 'ok'} />
+            <div className="label">
+              <b className="mono" style={{ fontSize: 12 }}>{dest}</b>
+              <div>
+                {g.count} 条 · {bytes(g.total)}
+                {g.bad ? ` · 链路：${[...g.chains].join('；')}` : ''}
               </div>
-              <span className={`status ${ok ? 'ok' : 'error'}`}>{ok ? '节点' : '异常'}</span>
             </div>
-          );
-        })}
+            <span className={`status ${g.bad ? 'error' : 'ok'}`}>{g.bad ? '异常' : '节点'}</span>
+          </div>
+        ))}
       </div>
       <p className="tiny faint">VM 先经 DoH 解析再按 IP 转发，所以这里只看得到 IP。显示域名需要把 VM 内 DNS 改成 FakeIP 并重新验收。</p>
+    </>
+  );
+}
+
+/** 自带核心的实时连接：核对每条都只经过选定节点 */
+function CoreConnections({ snap }: { snap: Snapshot }) {
+  const { data: conns, err } = usePolled(() => act('coreConnections'));
+  const node = snap.core?.node?.name ?? '';
+  if (err) return <p className="small err-text">读不到核心的连接：{err}</p>;
+  if (!conns) return <p className="small muted">读取中…</p>;
+  const offPath = new Set(conns.filter((c) => c.chains.length !== 1 || c.chains[0] !== node).map((c) => c.id));
+  return (
+    <ConnectionList
+      conns={conns}
+      offPath={offPath}
+      okSummary={`现在 ${conns.length} 条连接，全部经过选定节点「${node}」出去，没有直连。`}
+      badSummary={`${offPath.size} 条连接没有只经过选定节点，请检查核心配置。`}
+    />
+  );
+}
+
+/** Clash Verge 的连接（只读外部控制器）：只看入站 cc-vm-in，每条链路必须正好是 [节点, CC-VM-FIXED] */
+function VergeConnectionsPanel({ snap }: { snap: Snapshot }) {
+  const { data, err } = usePolled(() => act('clashConnections'));
+  if (err) return <p className="small err-text">读不到 Clash Verge 的连接：{err}</p>;
+  if (!data) return <p className="small muted">读取中…</p>;
+  const node = data.node ?? '未知';
+  const mismatch = data.node && snap.settings.nodeName && data.node !== snap.settings.nodeName;
+  return (
+    <>
+      <p className="tiny muted">
+        来自 Clash Verge（{snap.clashController.address}，只读）· CC-VM-FIXED 当前节点：<b>{node}</b>
+      </p>
+      {mismatch && (
+        <div className="callout warn small">
+          CC-VM-FIXED 现在选的是「{data.node}」，和设置里填的「{snap.settings.nodeName}」不一样。核实后在 Clash Verge 里改回，或者更新设置里的节点名和扩展脚本。
+        </div>
+      )}
+      <ConnectionList
+        conns={data.connections}
+        offPath={new Set(data.offPath)}
+        okSummary={`现在 ${data.connections.length} 条来自 VM 的连接，全部是 cc-vm-in → CC-VM-FIXED → ${node}。`}
+        badSummary={`${data.offPath.length} 条来自 VM 的连接没有正好经过 CC-VM-FIXED 和节点「${node}」，已标红。请在 Clash Verge 的「连接」里核对。`}
+      />
     </>
   );
 }

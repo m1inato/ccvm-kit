@@ -542,6 +542,15 @@ async function dispatch(name: string, args: unknown[]): Promise<unknown> {
       if (!(await confirm(`结束会话「${name}」？`, '会话里正在运行的程序（包括 Claude）会被结束，没保存的东西会丢。只是想关掉标签的话，直接关标签：会话会继续在 VM 里运行。', '结束会话'))) return false;
       return controller.killSession(name);
     }
+    case 'setClashController': {
+      const o = (args[0] ?? {}) as Record<string, unknown>;
+      const secret = o.secret === undefined ? undefined : o.secret === null ? null : str(o.secret, 'secret');
+      return controller.setClashController({ address: str(o.address ?? '', 'address'), secret });
+    }
+    case 'testClashController':
+      return controller.testClashController();
+    case 'clashConnections':
+      return controller.clashConnections();
     case 'renameSession':
       return controller.renameSession(str(args[0], 'from'), str(args[1], 'to'));
     case 'setHooks': {
@@ -736,6 +745,7 @@ void app.whenReady().then(async () => {
     user: os.userInfo().username,
     tmpdir: process.env.TMPDIR,
     loginPathOutput: readLoginPath,
+    vergeSecret: keychainSecret(path.join(dataDir, 'clash-verge', 'controller-secret.enc')),
     notify: (title, body) => {
       if (Notification.isSupported()) new Notification({ title, body }).show();
     },

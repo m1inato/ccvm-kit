@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { latestChecks } from '../../core/checks';
 import { relativeTime } from '../../core/status';
 import type { CliStatus, Settings } from '../../core/types';
-import { act, useApp } from '../api';
+import { act, errorText, useApp } from '../api';
 import { Dot, gib, Toggle } from '../components/common';
 import { CoreDetails, CoreSetup, CoreStatusLine } from '../components/EgressCore';
 
@@ -151,18 +151,81 @@ function ClashVergeEgress() {
         <p className="tiny faint">换节点等于换出口：保存脚本后检查会发现出口变了，核实后在首页点「就用新的出口」更新基线。App 不会悄悄换节点，也不写 Clash Verge 的配置文件。</p>
       </div>
 
-      <div className="card pad col">
-        <div className="row">
-          <h2 className="grow">控制接口（可选）</h2>
-          <span className="status idle">
-            <Dot level="idle" />
-            未连接
-          </span>
-        </div>
-        <p className="small muted">Clash Verge 模式下，「连接」面板要读它的外部控制器（Clash Verge Rev 2.5.10 默认关闭）。这一项还没做；想看连接列表，自带核心模式可以直接看。</p>
-      </div>
+      <VergeController />
       <div className="callout warn">这个方式下，Clash Verge 关闭时 VM 会断网（不会改走直连）。</div>
     </>
+  );
+}
+
+/** Clash Verge 外部控制器（可选）：只读连接列表。密钥存钥匙串，界面上只显示「已设置」 */
+function VergeController() {
+  const { snap, run } = useApp();
+  const cc = snap.clashController;
+  const [address, setAddress] = useState(cc.address || '127.0.0.1:9097');
+  const [secret, setSecret] = useState('');
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const save = async () => {
+    const ok = await run(() => act('setClashController', { address: address.trim(), ...(secret ? { secret } : {}) }), '已保存');
+    if (ok) setSecret('');
+  };
+  const test = async () => {
+    setResult(null);
+    try {
+      const v = await act('testClashController');
+      setResult({ ok: true, text: `连上了：Clash 内核 ${v.version}` });
+    } catch (err) {
+      setResult({ ok: false, text: errorText(err) });
+    }
+  };
+  return (
+    <div className="card pad col">
+      <div className="row">
+        <h2 className="grow">控制接口（可选）</h2>
+        <span className={`status ${cc.address ? 'ok' : 'idle'}`}>
+          <Dot level={cc.address ? 'ok' : 'idle'} />
+          {cc.address ? `已填 ${cc.address}` : '未连接'}
+        </span>
+      </div>
+      <p className="small muted">
+        填上 Clash Verge 的外部控制器后，项目页「连接」会列出来自 VM 的连接，并核对每条是不是只经过 CC-VM-FIXED 和你的节点。App 只读（只发 GET），不改 Clash Verge 的任何设置。
+        Clash Verge Rev 2.5.10 默认关闭外部控制器：在它的设置里打开、设一个密钥，再填到这里。
+      </p>
+      <div className="row">
+        <span className="small" style={{ width: 48 }}>地址</span>
+        <input className="input mono grow" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="127.0.0.1:9097" spellCheck={false} />
+      </div>
+      <div className="row">
+        <span className="small" style={{ width: 48 }}>密钥</span>
+        <input
+          className="input mono grow"
+          type="password"
+          value={secret}
+          onChange={(e) => setSecret(e.target.value)}
+          placeholder={cc.secretSet ? '已设置（不显示）；要换就重新填' : '外部控制器的密钥'}
+          autoComplete="off"
+        />
+      </div>
+      <div className="row wrap">
+        <button className="btn sm primary" onClick={() => void save()}>
+          保存
+        </button>
+        <button className="btn sm" disabled={!cc.address} onClick={() => void test()}>
+          测试连接
+        </button>
+        {cc.secretSet && (
+          <button className="btn sm ghost" onClick={() => run(() => act('setClashController', { address: cc.address, secret: null }), '已清除密钥')}>
+            清除密钥
+          </button>
+        )}
+        {cc.address && (
+          <button className="btn sm ghost" onClick={() => run(() => act('setClashController', { address: '', secret: null }), '已停用')}>
+            停用
+          </button>
+        )}
+      </div>
+      {result && <p className={`small ${result.ok ? 'ok-text' : 'err-text'}`}>{result.text}</p>}
+      <span className="tiny faint">只接受 127.0.0.1:端口 或 localhost:端口。密钥只存在钥匙串里，不写日志、不进导出的验收记录。VM 连不到这个端口（完整验收的 bypass.mac_port_9097 / 9090 一直在核对）。</span>
+    </div>
   );
 }
 

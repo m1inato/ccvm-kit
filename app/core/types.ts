@@ -1,8 +1,9 @@
 // 主进程与界面共用的类型。界面只拿到 Snapshot，自己不做安全判断。
 import type { CoreStatus, LatencyResult, PinnedNode } from './egress';
 import type { CoreConnection, NodeInfo } from './mihomo';
+import type { VergeConnections } from './clashVerge';
 
-export type { CoreConnection, CoreStatus, LatencyResult, NodeInfo, PinnedNode };
+export type { CoreConnection, CoreStatus, LatencyResult, NodeInfo, PinnedNode, VergeConnections };
 
 export type Level = 'ok' | 'busy' | 'idle' | 'error';
 
@@ -227,6 +228,8 @@ export interface Settings {
   latencyTestUrl: string;
   /** 外观：跟随系统（默认）/ 深色 / 浅色 */
   theme: Theme;
+  /** Clash Verge 外部控制器地址（可选，只读连接用）：127.0.0.1:端口 或 localhost:端口；空表示不用。密钥另存钥匙串 */
+  clashController: string;
 }
 
 export interface VmPackages {
@@ -287,6 +290,8 @@ export interface Snapshot {
   shares: SharesState;
   /** VM 的软件包：级别低于套件要求、或者没有 tmux 时提示补装（不算出错） */
   vmPackages: VmPackages;
+  /** Clash Verge 外部控制器：只给出地址和密钥是否已设置，密钥本身永远不进快照 */
+  clashController: { address: string; secretSet: boolean };
   /** 手动验收矩阵：项目 id → 勾选时间 */
   matrix: Record<string, number>;
   settings: Settings;
@@ -341,6 +346,12 @@ export interface Actions {
   cliStatus(): Promise<CliStatus>;
   /** 补装 VM 软件包：主进程先弹系统对话框确认，取消时返回 null；确认后是后台任务 */
   vmUpgrade(): Promise<string | null>;
+  /** Clash Verge 外部控制器：secret 不传表示不改，null 表示清除 */
+  setClashController(opts: { address: string; secret?: string | null }): Promise<Settings>;
+  /** 只发 GET /version */
+  testClashController(): Promise<{ version: string }>;
+  /** 只读：来自 VM 的连接，以及每条是否正好经 [节点, CC-VM-FIXED] */
+  clashConnections(): Promise<VergeConnections>;
   /** 主进程弹出选文件夹的对话框；取消时返回 null */
   addSharedFolder(): Promise<Settings | null>;
   removeSharedFolder(path: string): Promise<Settings>;
