@@ -1,37 +1,30 @@
-// 项目页右侧面板：链路 / 连接 / 检查。只显示脚本给出的结论和原话。
+// 安全：链路、连接、检查、断流测试都在这一页。只显示脚本给出的结论和原话。
 import { useEffect, useState } from 'react';
 import { latestChecks } from '../../core/checks';
 import { CHECK_GROUPS, checkLabel, LEAK_IDS, MATRIX, matrixDone, mergeChecks } from '../../core/report';
 import { relativeTime } from '../../core/status';
 import type { CoreConnection, Level, Snapshot } from '../../core/types';
 import { act, errorText, useApp } from '../api';
-import { Badge, Dot, formatBytes, levelOf, RebaselineFlow } from './common';
+import { Badge, Dot, formatBytes, levelOf, RebaselineFlow } from '../components/common';
 
-type Tab = 'chain' | 'conn' | 'checks';
-
-export function RightPanel({ snap }: { snap: Snapshot }) {
-  const [tab, setTab] = useState<Tab>('chain');
+export function SecurityPage() {
+  const { snap } = useApp();
   return (
-    <aside className="panel">
-      <div className="panel-tabs">
-        {(
-          [
-            ['chain', '链路'],
-            ['conn', '连接'],
-            ['checks', '检查'],
-          ] as [Tab, string][]
-        ).map(([id, label]) => (
-          <button key={id} className={`tab ${tab === id ? 'active' : ''}`} onClick={() => setTab(id)}>
-            {label}
-          </button>
-        ))}
+    <main className="main">
+      <div className="page security">
+        <h1>安全</h1>
+        <section className="sec">
+          <ChainPanel snap={snap} />
+        </section>
+        <section className="sec">
+          <h2>连接</h2>
+          <ConnectionsPanel snap={snap} />
+        </section>
+        <section className="sec">
+          <ChecksPanel snap={snap} />
+        </section>
       </div>
-      <div className="panel-body">
-        {tab === 'chain' && <ChainPanel snap={snap} />}
-        {tab === 'conn' && <ConnectionsPanel snap={snap} />}
-        {tab === 'checks' && <ChecksPanel snap={snap} />}
-      </div>
-    </aside>
+    </main>
   );
 }
 
@@ -53,7 +46,7 @@ function ChainPanel({ snap }: { snap: Snapshot }) {
   const st = (id: string): Level => levelOf(merged.get(id)?.ok);
   const msg = (id: string) => merged.get(id)?.msg;
   const running = snap.vm.status === 'Running';
-  const busy = snap.jobs.some((j) => j.state === 'running' && ['leaktest', 'setup', 'vm-start', 'vm-stop'].includes(j.kind));
+  const busy = snap.jobs.some((j) => j.state === 'running' && ['check-full', 'leaktest', 'setup', 'vm-start', 'vm-stop', 'shares', 'vm-upgrade'].includes(j.kind));
   const egressChanged = snap.issues.find((i) => i.kind === 'egress_changed');
   const ip = snap.egress.vm ?? snap.egress.baseline ?? '—';
   const nodeName = snap.settings.egressMode === 'builtin' ? snap.core?.node?.name : snap.settings.nodeName;
@@ -72,8 +65,17 @@ function ChainPanel({ snap }: { snap: Snapshot }) {
     <>
       <div className="row">
         <Badge level={snap.level}>{snap.level === 'ok' ? '受保护' : snap.headline}</Badge>
+        <span className="tiny faint">{snap.lastCheckAt ? `· ${relativeTime(snap.lastCheckAt, now)}检查` : ''}</span>
         <span className="spacer" />
-        <span className="tiny faint">{snap.lastCheckAt ? `${relativeTime(snap.lastCheckAt, now)}检查` : ''}</span>
+        <button className="btn sm" disabled={!running || snap.checking || busy} onClick={() => run(() => act('quickCheck'))}>
+          {snap.checking ? '检查中…' : '检查'}
+        </button>
+        <button className="btn sm" disabled={!running || busy} onClick={() => run(() => act('fullCheck'), '完整验收已开始')}>
+          完整验收
+        </button>
+        <button className="btn sm" disabled={!running || busy} onClick={() => run(() => act('leaktest'), '断流测试已开始，期间 VM 断网约 30 秒')}>
+          断流测试
+        </button>
       </div>
       {egressChanged && (
         <div className="callout err">
@@ -96,14 +98,6 @@ function ChainPanel({ snap }: { snap: Snapshot }) {
         })}
       </div>
       <p className="tiny faint">{leakLine(snap, now)}</p>
-      <div className="row">
-        <button className="btn sm" disabled={!running || snap.checking || busy} onClick={() => run(() => act('quickCheck'))}>
-          {snap.checking ? '检查中…' : '检查'}
-        </button>
-        <button className="btn sm" disabled={!running || busy} onClick={() => run(() => act('leaktest'), '断流测试已开始，期间 VM 断网约 30 秒')}>
-          断流测试
-        </button>
-      </div>
     </>
   );
 }
@@ -228,8 +222,6 @@ function ChecksPanel({ snap }: { snap: Snapshot }) {
   const merged = mergeChecks([snap.lastQuick, snap.lastFull]);
   const all = [...merged.values()];
   const failed = all.filter((c) => !c.ok).length;
-  const running = snap.vm.status === 'Running';
-  const busy = snap.jobs.some((j) => j.state === 'running' && ['check-full', 'leaktest', 'setup'].includes(j.kind));
   const leak = snap.lastLeak ? latestChecks(snap.lastLeak.checks) : new Map();
   const matrix = matrixDone(snap);
   const doneCount = matrix.filter((m) => m.done).length;
@@ -313,15 +305,10 @@ function ChecksPanel({ snap }: { snap: Snapshot }) {
           })}
         </div>
       </div>
-      <div className="row wrap">
-        <button className="btn sm" disabled={!running || busy} onClick={() => run(() => act('fullCheck'), '完整验收已在后台开始')}>
-          完整验收
-        </button>
-        <button className="btn sm" disabled={!running || busy} onClick={() => run(() => act('leaktest'), '断流测试已开始（约 30 秒，期间 VM 断网）')}>
-          断流测试
-        </button>
-        <button className="btn sm" onClick={() => run(() => act('exportReport'))}>
-          导出…
+      <div className="row">
+        <span className="spacer" />
+        <button className="btn sm ghost" onClick={() => run(() => act('exportReport'))}>
+          导出验收记录…
         </button>
       </div>
     </>

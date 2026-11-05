@@ -323,6 +323,29 @@ class EventTests(ScriptHarness):
                          [("my-api-1", "my-api", 1), ("scratch", "", 0)])
         self.assertEqual(self.values(events)["session_count"], "2")
 
+    def test_guest_session_listing_survives_real_tmux_output(self):
+        # 真的 tmux 会把 -F 格式里的控制字符转义成 "\\037" 这样的文字：分隔符必须是可见字符
+        text = (KIT / "guest/workspace.sh").read_text()
+        func = re.search(r"^list_sessions\(\) \{.*?^\}$", text, re.S | re.M).group(0)
+        self.stub("tmux", 'printf "%s\\n" "$*" >> "$STUB_LOG"\n'
+                  'case "$1" in\n'
+                  '  list-panes) printf "%s\\n" "my-api-1|11|claude" "my-api-1|01|bash" "scratch|11|bash" ;;\n'
+                  '  list-sessions) printf "%s\\n" "my-api-1|1793000100|1|1793000900|/home/cc/work/my-api" "scratch|1793000200|0|1793000300|/home/cc/a|b" ;;\n'
+                  'esac')
+        r = subprocess.run([BASH_EXEC, "-c", "US=$'\\x1f'; clean() { tr -d '\\037\\r\\n' | cut -c1-200; }\n" + func + "\nlist_sessions"],
+                           env=self.env, text=True, capture_output=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual([l.split(US) for l in r.stdout.splitlines()], [
+            ["SESSION", "my-api-1", "1793000100", "1", "/home/cc/work/my-api", "1793000900", "claude"],
+            ["SESSION", "scratch", "1793000200", "0", "/home/cc/a|b", "1793000300", "bash"],
+        ])
+        self.assertNotRegex(self.log.read_text(), r"[\x00-\x08\x0b-\x1f]")   # 传给 tmux 的格式里没有控制字符
+        # 宿主端把这些行转成会话事件
+        result = self.run_script("workspace.sh", "list", "--json", STUB_WORKSPACE_OUT=str(self.write("ws", r.stdout)))
+        sessions = [e for e in self.events(result) if e["type"] == "item" and e["kind"] == "session"]
+        self.assertEqual([(x["name"], x["project"], x["activity"], x["command"]) for x in sessions],
+                         [("my-api-1", "my-api", 1793000900, "claude"), ("scratch", "", 1793000300, "bash")])
+
     def test_claude_events_become_items(self):
         lines = [US.join(["CLAUDE", "1793000000", "Stop", "/home/cc/work/my-api/src", "", ""]),
                  US.join(["CLAUDE", "1793000005", "Notification", "/home/cc/work/my-api", "permission_prompt", 'needs "Bash"']),

@@ -129,8 +129,9 @@ function initial(scenario: string): Snapshot {
       { name: 'web-app', branch: 'feature/login', dirty: 0, ahead: 0, behind: 2, updated: Math.floor(now / 1000) - 2 * 86400, subject: '登录页样式', remote: 'https://github.com/you/web-app.git', claudeSessions: 0, claudeSince: 0 },
     ],
     sessions: [
-      { name: 'my-api-1', created: Math.floor(now / 1000) - 12 * 60, attached: 1, project: 'my-api' },
-      { name: 'my-api-2', created: Math.floor(now / 1000) - 26 * 3600, attached: 0, project: 'my-api' },
+      { name: 'my-api-1', created: Math.floor(now / 1000) - 12 * 60, attached: 1, project: 'my-api', activity: Math.floor(now / 1000) - 20, command: 'claude' },
+      { name: 'review', created: Math.floor(now / 1000) - 3 * 3600, attached: 0, project: 'my-api', activity: Math.floor(now / 1000) - 40 * 60, command: 'claude' },
+      { name: 'my-api-2', created: Math.floor(now / 1000) - 26 * 3600, attached: 0, project: 'my-api', activity: Math.floor(now / 1000) - 20 * 3600, command: 'bash' },
     ],
     projectsAt: now - MIN,
     claude: { installed: true, version: '2.1.311 (Claude Code)', checkedAt: now - 10 * MIN },
@@ -519,7 +520,7 @@ export function createMockBridge(): Bridge {
       const id = `demo${++termSeq}`;
       const project = spec.project ?? snap.sessions.find((s) => s.name === spec.session)?.project ?? 'my-api';
       const session = spec.session ?? `${project}-${snap.sessions.filter((s) => s.project === project).length + 1}`;
-      if (!snap.sessions.some((s) => s.name === session)) update({ sessions: [...snap.sessions, { name: session, created: Math.floor(Date.now() / 1000), attached: 1, project }] });
+      if (!snap.sessions.some((s) => s.name === session)) update({ sessions: [...snap.sessions, { name: session, created: Math.floor(Date.now() / 1000), attached: 1, project, activity: Math.floor(Date.now() / 1000), command: "bash" }] });
       line[id] = '';
       say(id, `\x1b[2m[演示终端：真实 App 里这里是 VM 中 cc 的 tmux 会话 ${session}]\x1b[0m\r\n` +
         (spec.mode === 'attach' ? '\x1b[36m╭─ Claude Code ─────────────────────────────╮\r\n│ ✻ 测试都通过了。要我提交吗？(y/n)          │\r\n╰───────────────────────────────────────────╯\x1b[0m\r\n' : '') +

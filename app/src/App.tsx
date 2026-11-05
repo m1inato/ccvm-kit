@@ -3,6 +3,7 @@ import { applyTermTheme } from './terms';
 import { Ctx, errorText, useNow, useRoute, useSnapshot, type AppCtx } from './api';
 import { SharesBadge, StatusPill, Toast } from './components/common';
 import { FilesPage } from './pages/Files';
+import { SecurityPage } from './pages/Security';
 import { CapsulePage } from './pages/Capsule';
 import { JobsPage } from './pages/Jobs';
 import { ProjectPage } from './pages/Project';
@@ -68,6 +69,9 @@ export function App() {
     case 'jobs':
       body = <JobsPage focus={arg} />;
       break;
+    case 'security':
+      body = <SecurityPage />;
+      break;
     case 'files':
       body = <FilesPage path={arg ? decodeURIComponent(arg) : '/home/cc/work'} />;
       break;
@@ -92,7 +96,7 @@ export function App() {
                 {jobsRunning.length > 1 ? ` 等 ${jobsRunning.length} 项` : ''}
               </button>
             )}
-            <StatusPill snap={snap} onClick={() => go(snap.level === 'error' ? '/' : '/jobs')} />
+            <StatusPill snap={snap} onClick={() => go('/security')} />
             <SharesBadge snap={snap} onClick={() => go('/settings/shares')} />
             <button className="btn sm ghost" title="VM 里的文件" disabled={snap.vm.status !== 'Running'} onClick={() => go('/files')}>
               文件

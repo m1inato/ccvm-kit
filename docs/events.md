@@ -192,7 +192,7 @@ id 是 App 与脚本之间的接口。可以改说明文字，改 id 要同时�
 同一次还会为 cc 的每个 tmux 会话输出一条：
 
 ```json
-{"v":1,"type":"item","kind":"session","name":"my-api-1","created":1793000100,"attached":1,"project":"my-api"}
+{"v":1,"type":"item","kind":"session","name":"my-api-1","created":1793000100,"attached":1,"project":"my-api","activity":1793000900,"command":"claude"}
 ```
 
 `workspace.sh events <偏移|end>` 为 hook 记下的每条 Claude 事件输出一条（文件由 cc 写，内容按不可信处理：只接受 Stop / Notification，去掉控制字符并截断）：
@@ -201,7 +201,7 @@ id 是 App 与脚本之间的接口。可以改说明文字，改 id 要同时�
 {"v":1,"type":"item","kind":"claude_event","t":1793000000,"event":"Stop","project":"my-api","notification":"","message":""}
 ```
 
-`project` 由会话的起始目录推出（`~/work/<项目>`），不在项目里的会话为空字符串。
+`project` 由会话的起始目录推出（`~/work/<项目>`），不在项目里的会话为空字符串。`activity` 是最后活动时间，`command` 是会话当前窗格里在跑的命令（例如 `claude`、`bash`）。
 
 `remote` 已去掉地址里的账号和令牌。`claude_sessions` 是工作目录在该项目下的 Claude Code 进程数，由 VM 内的 `/proc` 判断，不读 `~/.claude`。
 

@@ -25,12 +25,13 @@ relay_projects() {
   local kind name branch dirty ahead behind updated subject remote sessions since n=0 s=0
   while IFS="$US" read -r kind name branch dirty ahead behind updated subject remote sessions since; do
     if [ "$kind" = SESSION ]; then
-      # 字段复用：name=会话名 branch=创建时间 dirty=接入数 ahead=目录
+      # 字段复用：name=会话名 branch=创建时间 dirty=接入数 ahead=目录 behind=最后活动时间 updated=当前命令
       case "$name" in ""|*[!A-Za-z0-9_-]*) continue ;; esac
       s=$((s + 1))
       proj="${ahead#/home/cc/work/}"; proj="${proj%%/*}"
       [ "$proj" != "$ahead" ] || proj=""
-      ev item ",\"kind\":\"session\",\"name\":$(json_str "$name"),\"created\":$(num "$branch"),\"attached\":$(num "$dirty"),\"project\":$(json_str "$proj")"
+      case "$updated" in *[!A-Za-z0-9._+-]*) updated="" ;; esac
+      ev item ",\"kind\":\"session\",\"name\":$(json_str "$name"),\"created\":$(num "$branch"),\"attached\":$(num "$dirty"),\"project\":$(json_str "$proj"),\"activity\":$(num "$behind"),\"command\":$(json_str "${updated:0:32}")"
       continue
     fi
     if [ "$kind" = CLAUDE ]; then

@@ -32,6 +32,10 @@ export interface SessionItem {
   created: number;
   attached: number;
   project: string;
+  /** 最后活动时间（秒） */
+  activity: number;
+  /** 当前窗格里在跑的命令（claude、bash……） */
+  command: string;
 }
 
 /** share.sh status 列出的一个共享文件夹（名字只由脚本算出） */

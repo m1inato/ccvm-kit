@@ -3,7 +3,7 @@
 #   list          每个项目一行：PROJECT␟名称␟分支␟改动数␟领先␟落后␟最后提交时间␟提交说明␟远端␟Claude 进程数␟最早启动时间
 #   claude        VALUE claude_installed 1|0、VALUE claude_version <版本>
 #   clone <地址>  克隆到 ~/work/<名称>；git 的进度写到 stderr
-#   list 还会输出 tmux 会话：SESSION␟会话名␟创建时间␟是否有客户端接入␟所在目录；
+#   list 还会输出 tmux 会话：SESSION␟会话名␟创建时间␟接入数␟起始目录␟最后活动时间␟当前命令；
 #        最后是 VALUE tmux_installed 1|0、VALUE vm_level <级别>
 #   kill-session <会话名>  结束 cc 的一个 tmux 会话
 #   rename-session <旧名> <新名>  给 cc 的一个 tmux 会话改名（接入着的客户端不受影响）
@@ -64,10 +64,19 @@ list_projects() {
   done
 }
 
+# 每个会话一行 SESSION␟会话名␟创建时间␟接入数␟起始目录␟最后活动时间␟当前在跑的命令。
+# tmux 会把格式里的控制字符转义成 \037 这样的文字，所以先用 | 分隔（目录放最后，里面有 | 也不怕），再换成 ␟
 list_sessions() {
   command -v tmux >/dev/null 2>&1 || return 0
+  local cmds name created attached activity path cmd
+  # 每个会话当前窗口、当前窗格里在跑什么（claude、bash……）
+  cmds="$(tmux list-panes -a -F '#{session_name}|#{window_active}#{pane_active}|#{pane_current_command}' 2>/dev/null | awk -F'|' '$2 == "11" { print $1 "|" $3 }' || true)"
   # 没有 tmux 服务端时 list-sessions 返回非 0：等于没有会话
-  tmux list-sessions -F "SESSION${US}#{session_name}${US}#{session_created}${US}#{session_attached}${US}#{session_path}" 2>/dev/null | tr -d '\r' || true
+  tmux list-sessions -F '#{session_name}|#{session_created}|#{session_attached}|#{session_activity}|#{session_path}' 2>/dev/null | tr -d '\r' |
+    while IFS='|' read -r name created attached activity path; do
+      cmd="$(printf '%s\n' "$cmds" | awk -F'|' -v n="$name" '$1 == n { print $2; exit }')"
+      printf 'SESSION%s%s%s%s%s%s%s%s%s%s%s%s\n' "$US" "$name" "$US" "$created" "$US" "$attached" "$US" "$path" "$US" "$activity" "$US" "$(printf '%s' "$cmd" | clean)"
+    done || true
 }
 
 kill_session() {

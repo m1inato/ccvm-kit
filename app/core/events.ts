@@ -34,7 +34,10 @@ export function parseEventLine(line: string): ScriptEvent | null {
     case 'item': {
       if (e.kind === 'session') {
         if (!isStr(e.name) || !/^[A-Za-z0-9_-]{1,64}$/.test(e.name)) return null;
-        return { v: 1, type: 'item', kind: 'session', name: e.name, created: isNum(e.created) ? e.created : 0, attached: isNum(e.attached) ? e.attached : 0, project: isStr(e.project) ? e.project : '' };
+        return {
+          v: 1, type: 'item', kind: 'session', name: e.name, created: isNum(e.created) ? e.created : 0, attached: isNum(e.attached) ? e.attached : 0,
+          project: isStr(e.project) ? e.project : '', activity: isNum(e.activity) ? e.activity : 0, command: isStr(e.command) ? e.command.slice(0, 32) : '',
+        };
       }
       if (e.kind === 'claude_event') {
         if (e.event !== 'Stop' && e.event !== 'Notification') return null;

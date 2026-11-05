@@ -145,7 +145,7 @@ function VergeController() {
   return (
     <Section
       title="外部控制器"
-      hint="可选。填上后，项目页「连接」会列出来自 VM 的连接并核对链路。只读，只连本机。Clash Verge 默认没开，要在它的设置里打开并设一个密钥。"
+      hint="可选。填上后，安全页会列出来自 VM 的连接并核对链路。只读，只连本机。Clash Verge 默认没开，要在它的设置里打开并设一个密钥。"
     >
       <Item label="地址">
         <input className="input mono" style={{ width: 220 }} value={address} onChange={(e) => setAddress(e.target.value)} placeholder="127.0.0.1:9097" spellCheck={false} />

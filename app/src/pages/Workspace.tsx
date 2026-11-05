@@ -119,10 +119,9 @@ export function WorkspacePage() {
 
 function IssueActions({ issue }: { issue: Issue }) {
   const { snap, go, run } = useApp();
-  const firstProject = snap.projects[0]?.name;
   const chain = (
-    <button className="btn sm" onClick={() => go(`/project/${encodeURIComponent(firstProject ?? '')}`)} disabled={!firstProject}>
-      查看链路
+    <button className="btn sm" onClick={() => go('/security')}>
+      查看
     </button>
   );
   switch (issue.kind) {

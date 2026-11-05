@@ -1,15 +1,13 @@
 // 项目页：左边是这个项目在 VM 里的 tmux 会话，中间是内嵌终端（按会话分标签），右边是可收起的「链路 / 连接 / 检查」。
 // 关标签只是断开，会话和里面的 Claude 继续在 VM 里跑；结束会话要单独确认。出错时不开新会话，但可以接回已有会话。
 import { useEffect, useReducer, useRef, useState } from 'react';
-import { duration, relativeTime } from '../../core/status';
+import { relativeTime } from '../../core/status';
 import { act, errorText, useApp } from '../api';
 import { Dot } from '../components/common';
-import { RightPanel } from '../components/RightPanel';
 import { detachTerm, getTerm, openTerm, renameTerm, subscribe, termsOf, type TermEntry } from '../terms';
 
 export function ProjectPage({ name }: { name: string }) {
   const { snap, now, go, run } = useApp();
-  const [panel, setPanel] = useState(true);
   const [active, setActive] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -22,7 +20,8 @@ export function ProjectPage({ name }: { name: string }) {
   // 没有 tmux 时新会话开不起来（接回已有会话不受影响）
   const noTmux = snap.vmPackages.tmuxInstalled === false;
   const running = snap.vm.status === 'Running';
-  const vmSessions = snap.sessions.filter((s) => s.project === name);
+  // 最近有动静的在最上面
+  const vmSessions = snap.sessions.filter((s) => s.project === name).sort((a, b) => (b.activity || b.created) - (a.activity || a.created));
   const local = termsOf(name);
   const tabs = [...new Set([...local.map((t) => t.session), ...vmSessions.map((s) => s.name)])];
   const current = active && tabs.includes(active) ? active : local[0]?.session ?? null;
@@ -82,20 +81,20 @@ export function ProjectPage({ name }: { name: string }) {
         <button className="btn sm" disabled={!running} onClick={() => go(`/files/${encodeURIComponent(`/home/cc/work/${name}`)}`)} >
           文件
         </button>
-        <button className="btn sm ghost icon" onClick={() => setPanel(!panel)} title={panel ? '收起面板' : '展开面板'}>
-          {panel ? '›' : '‹'}
-        </button>
       </div>
       <div className="project-page">
         <aside className="sessions">
-          <div className="side-title">会话</div>
+          <div className="side-title">
+            会话 <span className="faint">{vmSessions.length || ''}</span>
+          </div>
+          {vmSessions.length === 0 && <div className="tiny muted">没有会话</div>}
           {vmSessions.map((s) => {
             const t = getTerm(s.name);
             const here = !!t && t.state === 'open';
             return (
               <div key={s.name} className={`session ${current === s.name ? 'active' : ''}`} style={{ cursor: 'pointer' }} onClick={() => select(s.name)}>
                 <div className="row small">
-                  <Dot level={here ? 'ok' : s.attached ? 'busy' : 'idle'} />
+                  <Dot level={s.command === 'claude' ? 'busy' : 'idle'} />
                   {renaming?.from === s.name ? (
                     <input
                       className="input mono grow"
@@ -126,16 +125,12 @@ export function ProjectPage({ name }: { name: string }) {
                   )}
                 </div>
                 <div className="tiny muted">
-                  {relativeTime(s.created * 1000, now)} · {here ? '已接入' : s.attached ? '别处接入' : '未接入'}
+                  {s.command === 'claude' ? 'Claude' : s.command || 'shell'} · {relativeTime((s.activity || s.created) * 1000, now)}
+                  {here ? ' · 在这里' : s.attached ? ' · 别处接入' : ''}
                 </div>
               </div>
             );
           })}
-          {p && p.claudeSessions > 0 && (
-            <div className="tiny muted">
-              <Dot level="busy" /> Claude · {duration(p.claudeSince, now)}
-            </div>
-          )}
           <button className="btn sm" disabled={blocked || noTmux || !running || busy} onClick={() => open('new')} title={blocked ? '核实之前不打开新会话' : ''}>
             新会话
           </button>
@@ -217,7 +212,6 @@ export function ProjectPage({ name }: { name: string }) {
           {error && current && <p className="small err-text">{error}</p>}
         </section>
 
-        {panel && <RightPanel snap={snap} />}
       </div>
     </div>
   );
