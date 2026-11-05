@@ -41,7 +41,7 @@ export function App() {
   }, [theme]);
 
   const isCapsule = route.startsWith('/capsule');
-  document.documentElement.classList.toggle('capsule', isCapsule);
+  document.documentElement.classList.toggle('capsule-window', isCapsule);
   if (!snap) return null;
   const ctx: AppCtx = { snap, now, go, run };
   if (isCapsule) {
@@ -85,7 +85,7 @@ export function App() {
               CCVM
             </a>
             <span className="spacer" />
-            {jobsRunning.length > 0 && (
+            {jobsRunning.length > 0 && snap.level !== 'busy' && (
               <button className="btn sm ghost" onClick={() => go('/jobs')} title="后台任务">
                 <span className="dot busy" />
                 {jobsRunning[0].title}

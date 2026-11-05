@@ -70,26 +70,25 @@ export function ProjectPage({ name }: { name: string }) {
     <div className="col grow" style={{ minHeight: 0, gap: 0 }}>
       <div className="row" style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)' }}>
         <button className="btn sm ghost" onClick={() => go('/')}>
-          ‹ 工作区
+          ‹ 项目
         </button>
         <h2>{name}</h2>
         {p && <span className="chip mono">{p.branch}</span>}
-        {p && <span className="tiny muted">{p.dirty ? `${p.dirty} 个未提交改动` : '干净'}</span>}
+        {p && p.dirty > 0 && <span className="tiny muted">{p.dirty} 个未提交改动</span>}
         <span className="spacer" />
-        <button className="btn sm" disabled={blocked || noTmux || !running} onClick={() => run(() => act('openTerminal', name))} title="用外部终端（Terminal / iTerm / Ghostty）新建一个 tmux 会话，和内嵌终端开的一样出现在下面的列表里">
+        <button className="btn sm" disabled={blocked || noTmux || !running} onClick={() => run(() => act('openTerminal', name))} title="在外部终端里新建一个会话">
           外部终端
         </button>
-        <button className="btn sm" disabled={!running} onClick={() => go(`/files/${encodeURIComponent(`/home/cc/work/${name}`)}`)} title="浏览、上传、下载这个项目里的文件">
+        <button className="btn sm" disabled={!running} onClick={() => go(`/files/${encodeURIComponent(`/home/cc/work/${name}`)}`)} >
           文件
         </button>
-        <button className="btn sm ghost" onClick={() => setPanel(!panel)} title="收起 / 展开右侧面板">
-          {panel ? '收起面板 ›' : '‹ 面板'}
+        <button className="btn sm ghost icon" onClick={() => setPanel(!panel)} title={panel ? '收起面板' : '展开面板'}>
+          {panel ? '›' : '‹'}
         </button>
       </div>
       <div className="project-page">
         <aside className="sessions">
-          <div className="tiny faint">会话（VM 里的 tmux）</div>
-          {vmSessions.length === 0 && <div className="tiny muted">还没有会话</div>}
+          <div className="side-title">会话</div>
           {vmSessions.map((s) => {
             const t = getTerm(s.name);
             const here = !!t && t.state === 'open';
@@ -127,18 +126,18 @@ export function ProjectPage({ name }: { name: string }) {
                   )}
                 </div>
                 <div className="tiny muted">
-                  {relativeTime(s.created * 1000, now)}开始 · {here ? '在这里接入' : s.attached ? '在别处接入' : '未接入'}
+                  {relativeTime(s.created * 1000, now)} · {here ? '已接入' : s.attached ? '别处接入' : '未接入'}
                 </div>
               </div>
             );
           })}
           {p && p.claudeSessions > 0 && (
             <div className="tiny muted">
-              <Dot level="busy" /> Claude 运行中 · {duration(p.claudeSince, now)}
+              <Dot level="busy" /> Claude · {duration(p.claudeSince, now)}
             </div>
           )}
           <button className="btn sm" disabled={blocked || noTmux || !running || busy} onClick={() => open('new')} title={blocked ? '核实之前不打开新会话' : ''}>
-            ＋ 新会话
+            新会话
           </button>
           {current && vmSessions.some((s) => s.name === current) && (
             <button
@@ -154,23 +153,20 @@ export function ProjectPage({ name }: { name: string }) {
               结束会话
             </button>
           )}
-          <p className="tiny faint" style={{ marginTop: 'auto' }}>
-            关标签只是断开，会话和里面的 Claude 继续在 VM 里跑。用外部终端也能接入：<span className="mono">tmux attach -t 会话名</span>
-          </p>
         </aside>
 
         <section className="center with-term">
           {snap.vmPackages.tmuxInstalled === false && (
-            <div className="callout row">
-              <span className="grow">VM 里没有 tmux，内嵌终端开不了新会话：先在首页「更新 VM」。</span>
+            <div className="notice">
+              <span className="grow">VM 里没有 tmux</span>
               <button className="btn sm" onClick={() => go('/')}>
-                去首页更新
+                更新 VM
               </button>
             </div>
           )}
           {blocked && (
             <div className="callout err">
-              {snap.headline}：{snap.detail} 正在跑的会话不受影响，可以接回；新会话先不开。
+              {snap.headline}：新会话暂停，正在运行的会话可以接回。
             </div>
           )}
           <div className="term-wrap">
@@ -184,7 +180,7 @@ export function ProjectPage({ name }: { name: string }) {
                     {entry && entry.state !== 'closed' && (
                       <span
                         className="x"
-                        title="断开（会话继续在 VM 里运行）"
+                        title="断开（会话继续运行）"
                         onClick={(e) => {
                           e.stopPropagation();
                           void detachTerm(t);
@@ -196,7 +192,7 @@ export function ProjectPage({ name }: { name: string }) {
                   </button>
                 );
               })}
-              <button className="term-tab" disabled={blocked || noTmux || !running || busy} onClick={() => open('new')} title="新会话：先做检查，再在 VM 里开一个 tmux 会话">
+              <button className="term-tab" disabled={blocked || noTmux || !running || busy} onClick={() => open('new')} title="新会话">
                 ＋
               </button>
             </div>
@@ -206,7 +202,7 @@ export function ProjectPage({ name }: { name: string }) {
               ) : (
                 <div className="term-empty">
                   <div className="col" style={{ alignItems: 'center' }}>
-                    <span>{busy ? '正在连接…（新会话会先做一遍检查）' : vmSessions.length ? '选一个会话接入，或者开一个新会话' : '还没有会话。开一个新会话，在里面运行 claude'}</span>
+                    {busy && <span className="muted">正在检查并连接…</span>}
                     {error && <span className="small err-text">{error}</span>}
                     {!busy && (
                       <button className="btn primary" disabled={blocked || noTmux || !running} onClick={() => open('new')}>
@@ -219,7 +215,6 @@ export function ProjectPage({ name }: { name: string }) {
             </div>
           </div>
           {error && current && <p className="small err-text">{error}</p>}
-          {!p && <div className="callout small">VM 的 ~/work 里还没看到这个项目{snap.projectsAt ? `（${relativeTime(snap.projectsAt, now)}刷新）` : ''}。</div>}
         </section>
 
         {panel && <RightPanel snap={snap} />}

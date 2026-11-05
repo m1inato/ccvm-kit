@@ -4,7 +4,7 @@ import { latestChecks } from '../../core/checks';
 import { relativeTime } from '../../core/status';
 import type { CliStatus, Settings } from '../../core/types';
 import { act, errorText, useApp } from '../api';
-import { Dot, gib, Toggle } from '../components/common';
+import { Badge, gib, Item, Section, Segmented, Toggle } from '../components/common';
 import { CoreDetails, CoreSetup, CoreStatusLine } from '../components/EgressCore';
 
 const TABS: [string, string][] = [
@@ -20,9 +20,6 @@ export function SettingsPage({ tab }: { tab: string }) {
   return (
     <>
       <nav className="sidebar">
-        <div className="tiny faint" style={{ padding: '0 10px 6px' }}>
-          设置
-        </div>
         {TABS.map(([id, label]) => (
           <button key={id} className={`nav-item ${tab === id ? 'active' : ''}`} onClick={() => go(`/settings/${id}`)}>
             {label}
@@ -45,41 +42,30 @@ function useSave() {
   return (patch: Partial<Settings>, ok?: string) => run(() => act('updateSettings', patch), ok);
 }
 
+// ---------------------------------------------------------------- 网络出口
 function Egress() {
   const { snap, run } = useApp();
   const mode = snap.settings.egressMode;
-  const choose = (m: Settings['egressMode']) => {
-    if (m !== mode) void run(() => act('setEgressMode', m));
-  };
   return (
-    <div className="settings-section">
-      <div>
-        <h1>网络出口</h1>
-        <p className="small muted">VM 只认 Mac 上的 127.0.0.1:17897，不关心对面是谁。两种方式对 VM 完全一样；切换后会自动检查一遍。</p>
-      </div>
-      <div className="row" style={{ alignItems: 'stretch' }}>
-        <div className={`card radio-card grow ${mode === 'builtin' ? 'selected' : ''}`} onClick={() => choose('builtin')}>
-          <span className={`radio ${mode === 'builtin' ? 'on' : ''}`} />
-          <div className="col" style={{ gap: 2 }}>
-            <b>CCVM 自带核心</b>
-            <span className="small muted">贴订阅链接、选一个节点。和日常 Clash Verge 完全独立：它怎么切模式、开不开虚拟网卡、关没关，都不影响 VM。</span>
-            <span className="chip accent" style={{ alignSelf: 'flex-start' }}>推荐</span>
-          </div>
-        </div>
-        <div className={`card radio-card grow ${mode === 'clash-verge' ? 'selected' : ''}`} onClick={() => choose('clash-verge')}>
-          <span className={`radio ${mode === 'clash-verge' ? 'on' : ''}`} />
-          <div className="col" style={{ gap: 2 }}>
-            <b>使用我的 Clash Verge</b>
-            <span className="small muted">扩展脚本加一个专用入口，固定走选定节点，优先于规则 / 全局 / 直连模式。Clash Verge 关了 VM 就断网。</span>
-          </div>
-        </div>
-      </div>
+    <div className="page">
+      <h1>网络出口</h1>
+      <Section title="出网方式" hint="VM 只连 Mac 上的 127.0.0.1:17897。两种方式对 VM 一样，切换时会短暂断网，之后自动检查。">
+        <Item label={mode === 'builtin' ? 'CCVM 自带核心' : '我的 Clash Verge'}>
+          <Segmented
+            value={mode}
+            options={[
+              ['builtin', '自带核心'],
+              ['clash-verge', 'Clash Verge'],
+            ]}
+            onChange={(m) => m !== mode && void run(() => act('setEgressMode', m))}
+          />
+        </Item>
+      </Section>
       {mode === 'builtin' ? (
         <>
           <CoreStatusLine snap={snap} />
           <CoreSetup snap={snap} />
           <CoreDetails snap={snap} />
-          <LatencyUrl />
         </>
       ) : (
         <ClashVergeEgress />
@@ -92,70 +78,51 @@ function ClashVergeEgress() {
   const { snap, now, run } = useApp();
   const save = useSave();
   const [node, setNode] = useState(snap.settings.nodeName);
-  const [preview, setPreview] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const quick = snap.lastQuick;
   const listener = quick ? latestChecks(quick.checks).get('listener.loopback_only') : undefined;
 
-  useEffect(() => {
-    if (!node.trim()) return setPreview(null);
-    void act('clashScript', node).then((r) => {
-      if (r.ok && r.script) {
-        const lines = r.script.split('\n');
-        const i = lines.findIndex((l) => l.startsWith('const NODE'));
-        setPreview(`${lines[i]}\n// …其余 ${lines.length - 1} 行与 config/clash-verge-script.js 相同`);
-        setErr(null);
-      } else {
-        setPreview(null);
-        setErr(r.error ?? null);
-      }
-    });
-  }, [node]);
-
   const copy = async () => {
     const r = await run(() => act('clashScript', node));
     if (!r?.ok || !r.script) return setErr(r?.error ?? '生成失败');
+    setErr(null);
     await save({ nodeName: node.trim() });
-    await run(() => act('copyText', r.script!), '已复制扩展脚本：到 Clash Verge 粘贴并保存');
+    await run(() => act('copyText', r.script!), '已复制扩展脚本');
   };
 
   return (
     <>
-      <div className="card pad row small">
-        <Dot level={listener ? (listener.ok ? 'ok' : 'error') : 'idle'} />
-        <span className="grow">
-          Clash Verge 专用入口 127.0.0.1:17897 · {listener ? (listener.ok ? '只听回环' : listener.msg) : '还没检查'}
-        </span>
-        <span className="muted">
-          {snap.egress.host ? `出口 ${snap.egress.host} · ` : ''}
-          {quick ? `${relativeTime(quick.at, now)}检查${quick.ok ? '通过' : '未通过'}` : ''}
-        </span>
-      </div>
+      <Section title="状态">
+        <Item label="专用入口">
+          <Badge level={listener ? (listener.ok ? 'ok' : 'error') : 'idle'}>{listener ? (listener.ok ? '只听回环' : listener.msg) : '还没检查'}</Badge>
+        </Item>
+        <Item
+          label="出口"
+          value={
+            <>
+              <span className="mono">{snap.egress.host ?? '—'}</span>
+              {quick ? ` · ${relativeTime(quick.at, now)}${quick.ok ? '检查通过' : '检查未通过'}` : ''}
+            </>
+          }
+        />
+      </Section>
 
-      <div className="card pad col">
-        <h2>扩展脚本</h2>
-        <div className="field">
-          <label>节点（和 Clash Verge 里显示的一致）</label>
-          <input className="input" value={node} onChange={(e) => setNode(e.target.value)} placeholder="例如：示例节点 · 东京 01" />
-        </div>
-        <div className="row">
-          <span className="small muted grow">在 Clash Verge 的订阅卡片上右键 → 扩展脚本，粘贴，保存，再重新激活订阅。</span>
-          <button className="btn primary" disabled={!node.trim()} onClick={copy}>
+      <Section title="扩展脚本" hint="在 Clash Verge 的订阅卡片上右键 → 扩展脚本，粘贴并保存，再重新激活订阅。换节点等于换出口，核实后在首页更新基线。">
+        <Item label="节点">
+          <input className="input" style={{ width: 300 }} value={node} onChange={(e) => setNode(e.target.value)} placeholder="和 Clash Verge 里显示的一致" />
+          <button className="btn sm primary" disabled={!node.trim()} onClick={copy}>
             复制脚本
           </button>
-        </div>
-        {err && <span className="small err-text">{err}</span>}
-        {preview && <div className="code">{preview}</div>}
-        <p className="tiny faint">换节点等于换出口：保存脚本后检查会发现出口变了，核实后在首页点「就用新的出口」更新基线。App 不会悄悄换节点，也不写 Clash Verge 的配置文件。</p>
-      </div>
+        </Item>
+        {err && <Item label={<span className="small err-text">{err}</span>} />}
+      </Section>
 
       <VergeController />
-      <div className="callout warn">这个方式下，Clash Verge 关闭时 VM 会断网（不会改走直连）。</div>
     </>
   );
 }
 
-/** Clash Verge 外部控制器（可选）：只读连接列表。密钥存钥匙串，界面上只显示「已设置」 */
+/** Clash Verge 外部控制器（可选）：「连接」面板只读它 */
 function VergeController() {
   const { snap, run } = useApp();
   const cc = snap.clashController;
@@ -170,140 +137,119 @@ function VergeController() {
     setResult(null);
     try {
       const v = await act('testClashController');
-      setResult({ ok: true, text: `连上了：Clash 内核 ${v.version}` });
+      setResult({ ok: true, text: `已连接 · ${v.version}` });
     } catch (err) {
       setResult({ ok: false, text: errorText(err) });
     }
   };
   return (
-    <div className="card pad col">
-      <div className="row">
-        <h2 className="grow">控制接口（可选）</h2>
-        <span className={`status ${cc.address ? 'ok' : 'idle'}`}>
-          <Dot level={cc.address ? 'ok' : 'idle'} />
-          {cc.address ? `已填 ${cc.address}` : '未连接'}
-        </span>
-      </div>
-      <p className="small muted">
-        填上 Clash Verge 的外部控制器后，项目页「连接」会列出来自 VM 的连接，并核对每条是不是只经过 CC-VM-FIXED 和你的节点。App 只读（只发 GET），不改 Clash Verge 的任何设置。
-        Clash Verge Rev 2.5.10 默认关闭外部控制器：在它的设置里打开、设一个密钥，再填到这里。
-      </p>
-      <div className="row">
-        <span className="small" style={{ width: 48 }}>地址</span>
-        <input className="input mono grow" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="127.0.0.1:9097" spellCheck={false} />
-      </div>
-      <div className="row">
-        <span className="small" style={{ width: 48 }}>密钥</span>
+    <Section
+      title="外部控制器"
+      hint="可选。填上后，项目页「连接」会列出来自 VM 的连接并核对链路。只读，只连本机。Clash Verge 默认没开，要在它的设置里打开并设一个密钥。"
+    >
+      <Item label="地址">
+        <input className="input mono" style={{ width: 220 }} value={address} onChange={(e) => setAddress(e.target.value)} placeholder="127.0.0.1:9097" spellCheck={false} />
+      </Item>
+      <Item label="密钥">
         <input
-          className="input mono grow"
+          className="input mono"
+          style={{ width: 220 }}
           type="password"
           value={secret}
           onChange={(e) => setSecret(e.target.value)}
-          placeholder={cc.secretSet ? '已设置（不显示）；要换就重新填' : '外部控制器的密钥'}
+          placeholder={cc.secretSet ? '已设置' : ''}
           autoComplete="off"
         />
-      </div>
-      <div className="row wrap">
-        <button className="btn sm primary" onClick={() => void save()}>
-          保存
-        </button>
-        <button className="btn sm" disabled={!cc.address} onClick={() => void test()}>
-          测试连接
-        </button>
-        {cc.secretSet && (
-          <button className="btn sm ghost" onClick={() => run(() => act('setClashController', { address: cc.address, secret: null }), '已清除密钥')}>
-            清除密钥
-          </button>
-        )}
+      </Item>
+      <div className="item foot">
+        {result && <span className={`note ${result.ok ? 'ok-text' : 'err-text'}`}>{result.text}</span>}
         {cc.address && (
           <button className="btn sm ghost" onClick={() => run(() => act('setClashController', { address: '', secret: null }), '已停用')}>
             停用
           </button>
         )}
+        <button className="btn sm" disabled={!cc.address} onClick={() => void test()}>
+          测试连接
+        </button>
+        <button className="btn sm primary" onClick={() => void save()}>
+          保存
+        </button>
       </div>
-      {result && <p className={`small ${result.ok ? 'ok-text' : 'err-text'}`}>{result.text}</p>}
-      <span className="tiny faint">只接受 127.0.0.1:端口 或 localhost:端口。密钥只存在钥匙串里，不写日志、不进导出的验收记录。VM 连不到这个端口（完整验收的 bypass.mac_port_9097 / 9090 一直在核对）。</span>
-    </div>
+    </Section>
   );
 }
 
+// ---------------------------------------------------------------- VM
 function Vm() {
-  const { snap, run } = useApp();
+  const { snap, run, go } = useApp();
   const save = useSave();
   const [name, setName] = useState(snap.settings.vmName);
   const [home, setHome] = useState(snap.settings.limaHome);
   const vm = snap.vm;
+  const pkg = snap.vmPackages;
   const dirty = name !== snap.settings.vmName || home !== snap.settings.limaHome;
+  const running = vm.status === 'Running';
   return (
-    <div className="settings-section">
-      <div>
-        <h1>VM</h1>
-        <p className="small muted">App 只调用 limactl（start / stop / list / shell），永远带专用 LIMA_HOME；不写 Lima 目录，不提供共享文件夹和端口转发。</p>
-      </div>
-      <div className="card pad col">
-        <div className="kv">
-          <span>状态</span>
-          <span>{vm.status}</span>
-          <span>资源</span>
-          <span>
-            {vm.cpus ?? '?'} vCPU · {gib(vm.memoryBytes)} 内存 · {gib(vm.diskBytes)} 磁盘
-          </span>
-          <span>系统</span>
-          <span>Ubuntu 24.04 ARM64 · {vm.arch ?? 'aarch64'}</span>
-        </div>
-        <p className="tiny faint">调整 CPU、内存：停机后按 Lima 文档修改实例配置，再跑一次完整验收。App 不改 Lima 目录。</p>
-      </div>
-      <div className="card pad col">
-        <div className="field">
-          <label>实例名</label>
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
-        </div>
-        <div className="field">
-          <label>专用 Lima 目录（LIMA_HOME）</label>
-          <input className="input mono" value={home} onChange={(e) => setHome(e.target.value)} />
-        </div>
-        <div className="field">
-          <label>状态目录（出口基线 expected-ip.txt 所在）</label>
-          <div className="row">
-            <input className="input mono grow" value={snap.settings.stateDir} readOnly />
-            <button className="btn" onClick={() => run(() => act('chooseStateDir'))}>
-              选择…
+    <div className="page">
+      <h1>VM</h1>
+      <Section title="这台 VM">
+        <Item label="状态">
+          <Badge level={running ? 'ok' : 'idle'}>{running ? '运行中' : vm.status}</Badge>
+        </Item>
+        <Item label="资源" value={`${vm.cpus ?? '?'} vCPU · ${gib(vm.memoryBytes)} 内存 · ${gib(vm.diskBytes)} 磁盘`} />
+        <Item label="系统" value={`Ubuntu 24.04 · ${vm.arch ?? 'aarch64'}`} />
+        {pkg.level !== undefined && (
+          <Item label="版本" value={pkg.needsUpgrade ? `${pkg.level} → ${pkg.target}` : `${pkg.level}`}>
+            {pkg.needsUpgrade && (
+              <button className="btn sm primary" onClick={() => run(async () => { const id = await act('vmUpgrade'); if (id) go(`/jobs/${id}`); })}>
+                更新 VM
+              </button>
+            )}
+          </Item>
+        )}
+      </Section>
+
+      <Section title="位置" hint="更换实例名或目录不会迁移 VM。状态目录可以选命令行套件的 state，让 App 和脚本共用一份出口基线。">
+        <Item label="实例名">
+          <input className="input" style={{ width: 280 }} value={name} onChange={(e) => setName(e.target.value)} />
+        </Item>
+        <Item label="Lima 目录">
+          <input className="input mono" style={{ width: 280 }} value={home} onChange={(e) => setHome(e.target.value)} />
+        </Item>
+        <Item label="状态目录" value={<span className="mono ellipsis" style={{ maxWidth: 260, display: 'inline-block' }}>{snap.settings.stateDir}</span>}>
+          <button className="btn sm" onClick={() => run(() => act('chooseStateDir'))}>
+            选择…
+          </button>
+        </Item>
+        {dirty && (
+          <div className="item foot">
+            <button className="btn sm primary" onClick={() => save({ vmName: name.trim(), limaHome: home.trim() }, '已保存')}>
+              保存
             </button>
           </div>
-          <span className="tiny faint">可以选命令行套件的 state 目录，让 App 和脚本共用同一份基线。更换实例名或目录不会迁移 VM。</span>
-        </div>
-        <div className="row">
-          <span className="spacer" />
-          <button className="btn primary" disabled={!dirty} onClick={() => save({ vmName: name.trim(), limaHome: home.trim() }, '已保存，正在重新检查')}>
-            保存
+        )}
+      </Section>
+
+      <Section title="维护">
+        <Item label="管理员 shell" hint="有 sudo，只用于系统维护。不要在这里运行 Claude。">
+          <button className="btn sm danger" disabled={!running} onClick={() => run(() => act('openAdminShell'))}>
+            打开
           </button>
-        </div>
-      </div>
-      <div className="card pad row">
-        <div className="grow">
-          <b>管理员 shell</b>
-          <p className="small muted">有 sudo，只用于系统维护。不要在这里运行 Claude。</p>
-        </div>
-        <button className="btn danger" disabled={vm.status !== 'Running'} onClick={() => run(() => act('openAdminShell'))}>
-          打开管理员 shell
-        </button>
-      </div>
+        </Item>
+      </Section>
     </div>
   );
 }
 
+// ---------------------------------------------------------------- 检查与提醒
 function Checks() {
   const { snap, run } = useApp();
   const save = useSave();
   return (
-    <div className="settings-section">
-      <div>
-        <h1>检查与提醒</h1>
-        <p className="small muted">只有「出错」会主动打扰你：系统通知一次、胶囊字幕、首页提示卡。同一个问题只通知一次，恢复后再发生才再通知。</p>
-      </div>
-      <div className="card pad">
-        <div className="setting-row">
-          <span className="grow">快速检查间隔</span>
+    <div className="page">
+      <h1>检查与提醒</h1>
+      <Section title="检查" hint="Mac 唤醒、切换网络后会立即检查。结论超过 2.5 个间隔没有更新时，状态变灰。">
+        <Item label="快速检查">
           <select className="input" value={snap.settings.checkIntervalMin} onChange={(e) => save({ checkIntervalMin: Number(e.target.value) })}>
             {[5, 10, 15, 30, 60].map((m) => (
               <option key={m} value={m}>
@@ -311,113 +257,70 @@ function Checks() {
               </option>
             ))}
           </select>
-        </div>
-        <div className="setting-row">
-          <span className="grow">
-            显示桌面胶囊
-            <div className="tiny faint">平时只占一条；做完或出问题时弹一句字幕</div>
-          </span>
+        </Item>
+      </Section>
+      <Section title="提醒" hint="只有出错会主动打扰你：系统通知一次，同一个问题恢复前不再通知。">
+        <Item label="桌面胶囊">
           <Toggle checked={snap.settings.showCapsule} onChange={(v) => save({ showCapsule: v })} />
-        </div>
-        <div className="setting-row">
-          <span className="grow">
-            「Claude 做完了」提醒
-            <div className="tiny faint">
-              在 VM 里装一个 Claude Code hook（root 所有的 managed-settings，Claude 改不了）。只记录事件类型、时间、工作目录和截断的通知文字，不记对话内容；同一项目 5 分钟内只弹一次字幕。和网络隔离无关。
-            </div>
-          </span>
+        </Item>
+        <Item label="Claude 做完了" hint="在 VM 里装一个 Claude 改不了的 hook，只记事件类型、时间和工作目录，不记对话内容。同一项目 5 分钟内只提醒一次。">
           <Toggle
             checked={snap.settings.hooksEnabled}
             disabled={snap.vm.status !== 'Running'}
-            onChange={(v) => void run(() => act('setHooks', v), v ? '已开启：新开的 Claude 会话生效' : '已关闭')}
+            onChange={(v) => void run(() => act('setHooks', v), v ? '已开启，新开的 Claude 会话生效' : '已关闭')}
           />
-        </div>
-      </div>
-      <div className="callout small">
-        Mac 唤醒、切换网络后会立即检查。检查结果超过 2.5 个间隔没有更新时，状态变灰，不会继续显示「受保护」。
-      </div>
+        </Item>
+      </Section>
     </div>
   );
 }
 
-/** 测延迟的地址：和 Clash Verge 用同一个才对得上数字 */
-function LatencyUrl() {
-  const { snap } = useApp();
-  const save = useSave();
-  const [url, setUrl] = useState(snap.settings.latencyTestUrl);
-  const dirty = url.trim() !== snap.settings.latencyTestUrl;
-  return (
-    <div className="card pad col">
-      <h2>测延迟</h2>
-      <div className="row">
-        <input className="input grow mono" value={url} onChange={(e) => setUrl(e.target.value)} spellCheck={false} />
-        <button className="btn sm" disabled={!dirty} onClick={() => save({ latencyTestUrl: url.trim() }, '已保存测试地址')}>
-          保存
-        </button>
-      </div>
-      <span className="tiny faint">
-        想和 Clash Verge 的数字对得上，就填它设置里的同一个测试地址。只接受 http:// 或 https://，不能带账号密码。
-        测的时候开着「统一延迟」（不计建连和握手），每个节点先热身一次再取第二次的结果，超时 5 秒。
-      </span>
-    </div>
-  );
-}
-
-/** 共享文件夹（读写）：设计降级，见 docs/desktop-app.md。改动都要「应用并重启 VM」才生效 */
+// ---------------------------------------------------------------- 共享文件夹
 function Shares() {
   const { snap, run, go } = useApp();
   const s = snap.settings;
   const sh = snap.shares;
   const busy = snap.jobs.find((j) => j.state === 'running' && j.kind === 'shares');
-  const appliedOf = (p: string) => sh.applied.find((a) => a.path === p);
-  const view = (p: string) => appliedOf(p)?.view;
+  const applied = (p: string) => sh.applied.find((a) => a.path === p);
+  const status = (p: string) => {
+    if (sh.problems[p]) return <span className="badge error" title={sh.problems[p]}>不能共享</span>;
+    const a = applied(p);
+    if (!a) return <span className="badge warn">未应用</span>;
+    if (a.mounted === false) return <Badge level="error">没挂上</Badge>;
+    return <span className="value mono">{a.view}</span>;
+  };
+  const note = sh.needsRetry ? '上次没有应用好' : sh.pendingApply ? '有改动未应用' : '';
   return (
-    <div className="settings-section">
-      <div>
-        <h1>共享文件夹</h1>
-        <p className="small muted">
-          让 VM 读写你在 Mac 上选定的具体文件夹。VM 里在 <code>/home/cc/mac/&lt;名字&gt;</code>。网络隔离不变，状态仍然是「受保护」，顶栏会常驻「共享 N 个文件夹 · 读写」。
-        </p>
+    <div className="page">
+      <h1>共享文件夹</h1>
+      <div className="callout warn">
+        VM 可以读写这些文件夹，包括脚本和 <code>.git/hooks</code>；之后在 Mac 上运行它们，等于以你的权限执行。
       </div>
-      <div className="callout warn col" style={{ gap: 6 }}>
-        <b>共享是读写的，这会削弱隔离</b>
-        <span>· VM 里的程序（包括 Claude）可以修改这些文件夹里的任何文件，包括脚本、<code>.git/hooks</code>、<code>package.json</code> 里的 scripts。之后在 Mac 上运行它们，就等于以你的权限执行。</span>
-        <span>· 这些文件夹的内容可以经固定出口发出去。</span>
-        <span>· 家目录本身、<code>~/Library</code>、<code>~/.ssh</code> 这类敏感位置，以及 CCVM 自己的目录，不能共享。</span>
-        <span>· 应用时会重启 VM，正在运行的 tmux 会话（包括 Claude）会被中断。</span>
-      </div>
-      <div className="card pad">
-        <div className="setting-row">
-          <span className="grow">允许 VM 访问共享文件夹</span>
+      <Section>
+        <Item label="允许 VM 访问共享文件夹">
           <Toggle checked={s.sharesEnabled} onChange={(v) => run(() => act('setSharesEnabled', v))} />
-        </div>
-        {s.sharedFolders.length === 0 && <p className="small muted" style={{ padding: '10px 0' }}>还没有选文件夹。</p>}
+        </Item>
+      </Section>
+      <Section
+        title="文件夹"
+        hint="VM 里在 /home/cc/mac/<名字>。家目录本身、~/Library、~/.ssh 等敏感位置和 CCVM 自己的目录不能共享。"
+        aside={
+          <button className="btn sm ghost" onClick={() => run(() => act('addSharedFolder'))}>
+            添加…
+          </button>
+        }
+      >
+        {s.sharedFolders.length === 0 && <Item label={<span className="muted">没有共享的文件夹</span>} />}
         {s.sharedFolders.map((p) => (
-          <div className="setting-row" key={p} style={{ alignItems: 'flex-start' }}>
-            <div className="grow col" style={{ gap: 2 }}>
-              <span className="mono" style={{ wordBreak: 'break-all' }}>{p}</span>
-              {sh.problems[p] ? (
-                <span className="tiny err-text">不能共享：{sh.problems[p]}</span>
-              ) : appliedOf(p)?.mounted === false ? (
-                <span className="tiny err-text">VM 里没有挂上：{view(p)} 现在是空的。点「重新应用」再试一次</span>
-              ) : view(p) ? (
-                <span className="tiny muted">VM 里：<code>{view(p)}</code></span>
-              ) : (
-                <span className="tiny muted">还没应用</span>
-              )}
-            </div>
+          <Item key={p} label={<span className="mono ellipsis" title={p}>{p}</span>}>
+            {status(p)}
             <button className="btn sm ghost" onClick={() => run(() => act('removeSharedFolder', p))}>
               移除
             </button>
-          </div>
+          </Item>
         ))}
-        <div className="row" style={{ paddingTop: 10 }}>
-          <button className="btn sm" onClick={() => run(() => act('addSharedFolder'))}>
-            添加文件夹…
-          </button>
-          <span className="spacer" />
-          {sh.pendingApply && <span className="tiny" style={{ color: 'var(--warn)' }}>有改动还没应用</span>}
-          {sh.needsRetry && <span className="tiny err-text">上次没有应用好，或者有文件夹在 VM 里没挂上</span>}
+        <div className="item foot">
+          {note && <span className="note">{note}</span>}
           <button
             className="btn sm primary"
             disabled={!(sh.pendingApply || sh.needsRetry) || !!busy || snap.vm.status === 'Missing'}
@@ -429,103 +332,95 @@ function Shares() {
             {busy ? '正在应用…' : sh.needsRetry ? '重新应用并重启 VM' : '应用并重启 VM'}
           </button>
         </div>
-      </div>
-      {sh.applied.length > 0 && (
-        <p className="tiny faint">
-          当前已应用：{sh.applied.map((a) => `${a.path} → ${a.view}`).join('；')}
-        </p>
-      )}
+      </Section>
     </div>
   );
 }
 
-/** 命令行入口 ccvm：任意终端里 Cmd+T 后输入 ccvm 就能进 VM */
-function CliRow() {
+// ---------------------------------------------------------------- 通用
+function CliItem() {
   const { run } = useApp();
   const [st, setSt] = useState<CliStatus | null>(null);
   useEffect(() => {
     void run(() => act('cliStatus')).then((s) => s && setSt(s));
   }, [run]);
   const install = async () => {
-    const s = await run(() => act('installCli'), '已生成 ccvm');
+    const s = await run(() => act('installCli'), '已安装 ccvm');
     if (s) setSt(s);
   };
+  const foreign = !!st?.installed && !st.generated;
   return (
-    <div className="setting-row" style={{ alignItems: 'flex-start' }}>
-      <div className="grow col" style={{ gap: 4 }}>
-        <span>
-          命令行入口 <code>ccvm</code>
-        </span>
-        <span className="tiny muted">
-          在任意终端里：<code>ccvm</code> 进入 cc，<code>ccvm 项目</code> 新建会话，<code>ccvm -a 会话</code> 接回会话。都会先经过检查。
-        </span>
-        {st?.installed && !st.generated && <span className="tiny err-text">{st.path} 已存在，而且不是 CCVM 生成的，App 不会覆盖它。</span>}
-        {st?.generated && <span className="tiny muted">已安装：{st.path}（设置变了会自动更新）</span>}
-        {st?.generated && !st.onPath && (
-          <span className="tiny">
-            <code>~/.local/bin</code> 不在 PATH 里。把这一行加到 <code>~/.zshrc</code>：<code className="mono">{st.hint}</code>{' '}
-            <a onClick={() => run(() => act('copyText', st.hint), '已复制')}>复制</a>
-          </span>
+    <>
+      <Item label={<>命令行 <code>ccvm</code></>} hint="任意终端里：ccvm 进入 cc，ccvm <项目> 新建会话，ccvm -a <会话> 接回。都会先经过检查。">
+        {foreign ? (
+          <span className="badge error" title={`${st?.path} 不是 CCVM 生成的，不会覆盖`}>已有同名文件</span>
+        ) : st?.generated ? (
+          <span className="value">已安装</span>
+        ) : (
+          <button className="btn sm" onClick={() => void install()}>
+            安装
+          </button>
         )}
-      </div>
-      <button className="btn sm" disabled={!!st?.installed && !st.generated} onClick={() => void install()}>
-        {st?.generated ? '重新生成' : '安装命令行入口 ccvm'}
-      </button>
-    </div>
+      </Item>
+      {st?.generated && !st.onPath && (
+        <Item label={<span className="small">把 <code>~/.local/bin</code> 加到 PATH（写进 ~/.zshrc）</span>}>
+          <button className="btn sm ghost" onClick={() => run(() => act('copyText', st.hint), '已复制')}>
+            复制命令
+          </button>
+        </Item>
+      )}
+    </>
   );
 }
 
 function General() {
   const { snap, go, run } = useApp();
   const save = useSave();
+  const build = snap.kitBuild;
   return (
-    <div className="settings-section">
+    <div className="page">
       <h1>通用</h1>
-      <div className="card pad">
-        <div className="setting-row">
-          <span className="grow">登录时启动</span>
+      <Section>
+        <Item label="登录时启动">
           <Toggle checked={snap.settings.launchAtLogin} onChange={(v) => save({ launchAtLogin: v })} />
-        </div>
-        <div className="setting-row">
-          <span className="grow">用哪个终端打开 cc</span>
+        </Item>
+        <Item label="外观">
+          <Segmented
+            value={snap.settings.theme}
+            options={[
+              ['system', '自动'],
+              ['light', '浅色'],
+              ['dark', '深色'],
+            ]}
+            onChange={(v) => save({ theme: v })}
+          />
+        </Item>
+      </Section>
+      <Section title="终端">
+        <Item label="外部终端" hint={snap.settings.terminalApp === 'Ghostty' ? 'Ghostty 需要 1.3.0 或更新；第一次会请求「自动化」权限。' : undefined}>
           <select className="input" value={snap.settings.terminalApp} onChange={(e) => save({ terminalApp: e.target.value as Settings['terminalApp'] })}>
-            <option value="Terminal">终端（Terminal）</option>
+            <option value="Terminal">终端</option>
             <option value="iTerm">iTerm</option>
-            <option value="Ghostty">Ghostty（1.3.0 或更新）</option>
+            <option value="Ghostty">Ghostty</option>
           </select>
-        </div>
-        {snap.settings.terminalApp === 'Ghostty' && (
-          <p className="tiny muted" style={{ padding: '0 0 10px' }}>
-            经 AppleScript 让 Ghostty 新开窗口。第一次会弹出「自动化」权限请求：允许 CCVM 控制 Ghostty。
-          </p>
-        )}
-        <CliRow />
-        <div className="setting-row">
-          <span className="grow">外观</span>
-          <select className="input" value={snap.settings.theme} onChange={(e) => save({ theme: e.target.value as Settings['theme'] })}>
-            <option value="system">跟随系统</option>
-            <option value="dark">深色</option>
-            <option value="light">浅色</option>
-          </select>
-        </div>
-        <div className="setting-row">
-          <span className="grow">验收记录</span>
+        </Item>
+        <CliItem />
+      </Section>
+      <Section>
+        <Item label="验收记录">
           <button className="btn sm" onClick={() => run(() => act('exportReport'))}>
-            导出为 Markdown
+            导出…
           </button>
-        </div>
-        <div className="setting-row">
-          <span className="grow">欢迎页</span>
+        </Item>
+        <Item label="欢迎页">
           <button className="btn sm" onClick={() => go('/welcome')}>
-            重新打开
+            打开
           </button>
-        </div>
-      </div>
-      <p className="tiny faint">
-        App {snap.appVersion} · 套件 {snap.kitVersion}
-        {snap.kitBuild
-          ? ` · 提交 ${snap.kitBuild.commit}${snap.kitBuild.dirty ? '（构建时有未提交的改动）' : ''} · 构建于 ${snap.kitBuild.built.slice(0, 16).replace('T', ' ')}`
-          : ' · 从源码运行'}
+        </Item>
+      </Section>
+      <p className="version">
+        CCVM {snap.appVersion} · 套件 {snap.kitVersion}
+        {build ? ` · ${build.commit}${build.dirty ? '+' : ''}` : ''}
       </p>
     </div>
   );

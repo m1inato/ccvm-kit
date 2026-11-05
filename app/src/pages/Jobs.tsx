@@ -18,13 +18,10 @@ export function JobsPage({ focus }: { focus?: string }) {
   return (
     <main className="main">
       <div className="page-head">
-        <div className="grow">
-          <h1>后台任务</h1>
-          <p className="small muted">创建 VM、断流测试、克隆等都在后台运行；App 退出后继续，重新打开时接回。安装脚本可以重跑，所以「重试」就是再跑一次。</p>
-        </div>
+        <h1 className="grow">后台任务</h1>
       </div>
       <div className="col">
-        {snap.jobs.length === 0 && <div className="empty">还没有后台任务。</div>}
+        {snap.jobs.length === 0 && <div className="empty">没有后台任务</div>}
         {snap.jobs.map((j) => (
           <JobCard key={j.id} job={j} open={j.id === focus} />
         ))}
@@ -75,9 +72,6 @@ function JobCard({ job, open: initiallyOpen }: { job: JobSummary; open: boolean 
           ))}
         </ul>
       )}
-      <p className="tiny faint mono">
-        {job.args.join(' ')}
-      </p>
       {open && <pre className="log">{log || '（还没有输出）'}</pre>}
     </div>
   );

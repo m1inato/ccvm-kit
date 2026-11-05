@@ -249,7 +249,10 @@ export function createMockBridge(): Bridge {
   let snap = initial(scenario);
   // ?theme=light|dark：截图核对两套配色用
   const theme = params.get('theme');
-  if (theme === 'light' || theme === 'dark') snap = { ...snap, settings: { ...snap.settings, theme } };
+  if (theme === 'light' || theme === 'dark') {
+    snap = { ...snap, settings: { ...snap.settings, theme } };
+    document.documentElement.dataset.theme = theme; // 第一次渲染前就定下来，截图不会拍到切换中的颜色
+  }
   const listeners = new Set<(s: Snapshot) => void>();
   const emit = () => listeners.forEach((l) => l(snap));
   const update = (patch: Partial<Snapshot>) => {

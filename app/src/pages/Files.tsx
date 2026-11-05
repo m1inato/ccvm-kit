@@ -170,7 +170,7 @@ export function FilesPage({ path }: { path: string }) {
         </div>
       </div>
       {onMac && (
-        <div className="callout warn">这里是 Mac 上的真实文件夹：在这里新建、修改、删除，改的都是你 Mac 上的文件。</div>
+        <div className="callout warn">这是 Mac 上的文件夹，改动会直接改到 Mac 上的文件。</div>
       )}
       {!running && <div className="empty">VM 没有运行。</div>}
       {running && error && <div className="callout err">{error}</div>}
@@ -182,7 +182,7 @@ export function FilesPage({ path }: { path: string }) {
               <span className="grow">..</span>
             </div>
           )}
-          {listing.entries.length === 0 && <div className="empty">空文件夹。可以把文件从 Finder 拖进来。</div>}
+          {listing.entries.length === 0 && <div className="empty">空文件夹</div>}
           {listing.entries.map((e) => (
             <div
               key={e.name}
@@ -199,7 +199,6 @@ export function FilesPage({ path }: { path: string }) {
           {listing.truncated && <div className="tiny faint" style={{ padding: 8 }}>只列出了前 {listing.truncated} 项。</div>}
         </div>
       )}
-      <p className="tiny faint">双击打开文件夹。可以从 Finder 拖入文件或文件夹上传到当前位置；下载只支持单个普通文件（不跟符号链接）。上传、下载的进度在「后台任务」里。</p>
     </main>
   );
 }

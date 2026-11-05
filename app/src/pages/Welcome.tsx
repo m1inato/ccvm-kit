@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { latestChecks } from '../../core/checks';
 import type { CheckRecord, JobSummary, Snapshot } from '../../core/types';
 import { act, usePoll, useApp } from '../api';
-import { Dot, levelOf } from '../components/common';
+import { Dot, Hint, levelOf } from '../components/common';
 import { CoreSetup } from '../components/EgressCore';
 
 const INSTALL = 'curl -fsSL https://claude.ai/install.sh | bash -s stable';
@@ -31,12 +31,12 @@ export function WelcomePage({ step }: { step: number }) {
   );
 }
 
-function Head({ title, sub }: { title: string; sub: string }) {
+function Head({ title, sub }: { title: string; sub?: string }) {
   return (
     <div className="welcome-head">
       <div className="shield" />
       <h1>{title}</h1>
-      <p className="muted small">{sub}</p>
+      {sub && <p className="muted small">{sub}</p>}
     </div>
   );
 }
@@ -48,7 +48,8 @@ function Detect({ rec, id, label, fallback }: { rec?: CheckRecord; id: string; l
       <Dot level={levelOf(c?.ok)} />
       <div className="grow">
         <div>{label}</div>
-        <div className={`why ${c && !c.ok ? 'err-text' : ''}`}>{c ? c.msg : fallback ?? '检测中…'}</div>
+        {c && !c.ok && <div className="why err-text">{c.msg}</div>}
+        {!c && fallback && <div className="why">{fallback}</div>}
       </div>
     </div>
   );
@@ -70,11 +71,10 @@ function StepEgress({ onLater }: { onLater: () => void }) {
 
   return (
     <>
-      <Head title="欢迎使用 CCVM" sub="先给 VM 一个专用出口。VM 只认 Mac 上的 127.0.0.1:17897，所有流量都从这里经你选定的节点出去。" />
+      <Head title="欢迎使用 CCVM" sub="先给 VM 一个专用出口" />
       <div className="options">
         <div className="card option">
           <b>Lima</b>
-          <span className="muted">运行 VM · 不挂载 Mac 目录</span>
           <span className={`status ${levelOf(lima?.ok)}`}>
             <Dot level={levelOf(lima?.ok)} />
             {lima ? (lima.ok ? `已安装 ${rec?.values.lima_version ?? ''}` : '未安装或过旧：brew install lima') : '检测中'}
@@ -146,7 +146,6 @@ function BuiltinSteps({ ready }: { ready: boolean }) {
                 </button>
               </div>
               <div className="code">{core?.mihomo.path ? 'brew upgrade mihomo' : 'brew install mihomo'}</div>
-              <span className="tiny faint">装好后这里会自动检测到。App 用 launchd 把它作为你自己的后台服务运行，不需要管理员权限。</span>
             </>
           )}
         </div>
@@ -156,7 +155,7 @@ function BuiltinSteps({ ready }: { ready: boolean }) {
         <div className="grow col">
           <div>贴订阅链接，选一个具体节点</div>
           {installed && <CoreSetup snap={snap} compact />}
-          {core?.node && !ready && <span className="tiny faint">核心已经用「{core.node.name}」启动，正在确认它只监听 127.0.0.1…</span>}
+          {core?.node && !ready && <span className="small muted">正在确认…</span>}
         </div>
       </div>
     </div>
@@ -182,22 +181,26 @@ function ClashVergeSteps({ ready }: { ready: boolean }) {
       <div className="step">
         <span className={`step-num ${node.trim() ? 'done' : 'current'}`}>1</span>
         <div className="grow col">
-          <div>填一个具体节点的完整名称（和 Clash Verge 里显示的一致，保留 emoji 和空格）</div>
+          <div className="row" style={{ gap: 6 }}>
+            填一个具体节点的名称
+            <Hint text="和 Clash Verge 里显示的完全一致（保留 emoji 和空格）。策略组、自动选择不行，要一个具体节点；节点不在订阅里时专用入口拒绝连接，不会改走直连。" />
+          </div>
           <div className="row">
             <input className="input grow" value={node} placeholder="例如：示例节点 · 东京 01" onChange={(e) => { setNode(e.target.value); setCopied(false); }} />
             <button className="btn primary" disabled={!node.trim()} onClick={copy}>
-              {copied ? '已复制，可以再复制' : '生成并复制扩展脚本'}
+              {copied ? '已复制' : '复制扩展脚本'}
             </button>
           </div>
           {scriptErr && <span className="small err-text">{scriptErr}</span>}
-          <span className="tiny faint">策略组、自动选择、负载均衡组都不行，要一个具体节点。节点名不在订阅里时，专用入口会拒绝连接，不会改走直连。</span>
         </div>
       </div>
       <div className="step">
         <span className={`step-num ${ready ? 'done' : copied ? 'current' : ''}`}>2</span>
         <div className="grow">
-          在 Clash Verge 的订阅卡片上右键 → <b>扩展脚本</b>，粘贴，保存，然后重新激活订阅。
-          <div className="tiny faint">已有 main() 时：保留原 main，把 <code>config = ccvmPatch(config);</code> 加到 return 前，删掉脚本末尾的 main()。</div>
+          <span className="row" style={{ gap: 6, display: 'inline-flex' }}>
+            在 Clash Verge 的订阅卡片上右键 → <b>扩展脚本</b>，粘贴，保存，再重新激活订阅
+            <Hint text="已有 main() 时：保留原来的 main，把 config = ccvmPatch(config); 加到 return 前，删掉脚本末尾的 main()。" />
+          </span>
         </div>
       </div>
     </div>
@@ -252,7 +255,7 @@ function StepVm({ onLater }: { onLater: () => void }) {
 
   return (
     <>
-      <Head title={done ? 'VM 已经准备好' : running ? '正在准备 VM' : '准备 VM'} sub="在后台创建，不挂载任何 Mac 目录。可以先关掉这个窗口，做完会提醒你。" />
+      <Head title={done ? 'VM 已经准备好' : running ? '正在准备 VM' : '准备 VM'} sub={running ? '可以先关掉这个窗口，做完会提醒你' : undefined} />
       <div className="card pad col">
         <div className="row small">
           <span className="grow">{done ? '全部完成' : running ? job?.step ?? '开始' : job?.state === 'failed' ? '没有完成' : '还没开始'}</span>
@@ -317,7 +320,7 @@ function StepClaude() {
     <>
       <Head
         title="最后一步"
-        sub={`VM 已经准备好${snap.egress.baseline ? `，出口 ${snap.egress.baseline}` : ''}。最后在 VM 里装 Claude Code 并登录。`}
+        sub="最后在 VM 里装 Claude Code 并登录"
       />
       <div className="steps">
         <div className="step">
@@ -358,7 +361,6 @@ function StepClaude() {
               <input type="checkbox" checked={confirmed} onChange={(e) => run(() => act('updateSettings', { claudeLoginConfirmed: e.target.checked }))} />
               我已经在终端里登录了
             </label>
-            <span className="tiny faint">App 不读取 VM 里的 ~/.claude，登录状态由你确认。</span>
           </div>
         </div>
       </div>

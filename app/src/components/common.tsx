@@ -1,5 +1,4 @@
-import { useState } from 'react';
-import { relativeTime } from '../../core/status';
+import { useState, type ReactNode } from 'react';
 import type { Level, RunResult, Snapshot } from '../../core/types';
 import { act, useApp } from '../api';
 
@@ -40,17 +39,6 @@ export function SharesBadge({ snap, onClick }: { snap: Snapshot; onClick?: () =>
     <button className="share-badge" onClick={onClick} title={snap.shares.applied.map((s) => `${s.path} → ${s.view}`).join('\n')}>
       共享 {n} 个文件夹 · 读写{unmounted ? ` · ${unmounted} 个没挂上` : ''}
     </button>
-  );
-}
-
-export function Ring({ snap }: { snap: Snapshot }) {
-  const { now, run } = useApp();
-  return (
-    <button
-      className={`ring ${snap.level}`}
-      title={`${snap.headline} · 上次检查 ${relativeTime(snap.lastCheckAt, now)}（点击立即检查）`}
-      onClick={() => run(() => act('quickCheck'))}
-    />
   );
 }
 
@@ -147,6 +135,69 @@ export function Toast({ text, kind, onClose }: { text: string; kind: 'error' | '
       <button className="btn sm ghost" onClick={onClose}>
         关闭
       </button>
+    </div>
+  );
+}
+
+/** ⓘ：悬停才看得到的说明。界面上只放名称和状态，解释放这里 */
+export function Hint({ text }: { text: string }) {
+  return (
+    <i className="hint" data-tip={text} aria-label={text}>
+      i
+    </i>
+  );
+}
+
+/** 一组：上面一行小标题（可带右侧动作），下面是圆角列表 */
+export function Section({ title, hint, aside, children }: { title?: string; hint?: string; aside?: ReactNode; children: ReactNode }) {
+  return (
+    <section className="section">
+      {(title || aside) && (
+        <div className="section-head">
+          {title && <b>{title}</b>}
+          {hint && <Hint text={hint} />}
+          <span className="spacer" />
+          {aside}
+        </div>
+      )}
+      <div className="group">{children}</div>
+    </section>
+  );
+}
+
+/** 列表里的一行：左边名称，右边控件或值 */
+export function Item({ label, hint, value, children, className }: { label: ReactNode; hint?: string; value?: ReactNode; children?: ReactNode; className?: string }) {
+  return (
+    <div className={`item ${className ?? ''}`}>
+      <span className="label">
+        {label}
+        {hint && <Hint text={hint} />}
+      </span>
+      {value !== undefined && <span className="value">{value}</span>}
+      {children}
+    </div>
+  );
+}
+
+/** 状态：一个点加一句短话 */
+export function Badge({ level, children }: { level: Level | 'warn'; children: ReactNode }) {
+  return (
+    <span className={`badge ${level}`}>
+      <Dot level={level === 'warn' ? 'busy' : level} />
+      {children}
+    </span>
+  );
+}
+
+/** 二选一 / 多选一的分段控件 */
+export function Segmented<T extends string>({ value, options, onChange }: { value: T; options: [T, string][]; onChange: (v: T) => void }) {
+  return (
+    <div className="segmented">
+      {options.map(([v, label]) => (
+        <button key={v} className={v === value ? 'on' : ''} onClick={() => onChange(v)}>
+          {label}
+        </button>
+      ))}
     </div>
   );
 }
