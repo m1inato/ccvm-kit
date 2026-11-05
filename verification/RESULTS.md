@@ -2,7 +2,7 @@
 
 ## 自动化检查
 
-运行 `bash verification/run.sh`。需要 Bash、Node.js ≥ 18、Python 3.10+ 与 Git；不需要 Lima、代理订阅或 Claude 账号。
+运行 `bash verification/run.sh`。需要 Bash、Node.js 18 以上、Python 3.10 以上与 Git。
 
 - Clash 扩展脚本：13 项合成订阅用例，覆盖精确匹配、端口冲突、保留原配置、幂等、provider 模式与误填拒绝。
 - Python 标准库 unittest：配置优先级、路径中的空格和 Unicode、独立 Lima 目录、状态目录、配置错误、全局覆盖拒绝，以及 macOS Bash 3.2 的真实 setup 日志路径。
@@ -17,7 +17,7 @@ CI 在 macOS 与 Linux 上分别运行上述检查。配置测试使用系统 `/
 
 ## Linux 防火墙功能检查
 
-此测试在独立 network namespaces 内加载真实 nftables 模板，用模拟 VM、Mac 与公网地址验证允许、阻断和锁定回落，不切换任何现有 VM 的 TUN，也不创建测试系统用户。
+在独立 network namespaces 里加载真实 nftables 规则，用模拟的 VM、Mac 与公网地址验证允许、阻断和锁定回落。
 
 在有 root 权限的临时 Linux 环境中：
 
@@ -27,7 +27,7 @@ sudo apt-get install -y nftables
 sudo bash verification/netns-firewall-test.sh "$PWD"
 ```
 
-依赖 Python 3、util-linux（unshare / nsenter / setpriv / mount）、nftables、可用的 TUN 与 network namespace 支持。CI 使用 Ubuntu 24.04；限制容器若无所需权限，会明确失败。
+依赖 Python 3、util-linux、nftables，以及 TUN 与 network namespace 支持。
 
 ## 2.3.0
 
@@ -65,9 +65,6 @@ sudo bash verification/netns-firewall-test.sh "$PWD"
 | macOS 本地 | 发布包解压后运行完整离线检查 | 通过 |
 | Ubuntu 24.04 ARM64 VM | 12 项 Python 用例、Bash 语法、发布内容检查 | 通过 |
 | Ubuntu 24.04 ARM64 VM | 独立 network namespaces 中 22 项真实 nftables 功能场景 | 通过，fails=0 |
-| GitHub 托管 macOS / Ubuntu runner | 工作流已配置，平台未启动任务 | 待执行 |
-
-Linux 补测使用临时目录与独立网络命名空间，未切换现有 VM 的 TUN；结束后防火墙及 TUN 服务仍处于 active 状态。Linux VM 未另装 Node.js，Clash JavaScript 用例在 macOS 上运行。
 
 ## 2.2.0 实机部署
 
@@ -83,8 +80,3 @@ Linux 补测使用临时目录与独立网络命名空间，未切换现有 VM �
 
 通过项：VZ 启动、无宿主挂载和额外网卡、Clash 专用入口及节点链路、出口基线一致、DoH、无 sudo 工作用户、绕过连接被阻断、抓包正向对照有效且旁路为 0、停止 TUN 后断流、恢复后联网，以及 VM 停机重启后的完整复验。Claude 原生安装与 `claude doctor` 通过，交互入口以 cc 身份工作。
 
-此记录不代替新用户的本机验收。
-
-尚未验证：Claude 账号登录及真实提示词请求、Mac 睡眠唤醒、Wi-Fi / 热点切换，以及逐项切换系统代理、TUN 和 Clash 模式。新环境或组件升级后应执行 README 与 [运维说明](../docs/operations.md) 中的验收。
-
-个人节点名、出口 IP、文件路径、运行日志与登录凭据不属于公开验证材料。

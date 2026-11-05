@@ -40,9 +40,9 @@
 | 抓包对照为 0 或 tcpdump 失败 | 检查 VM 内 `ip -4 route get 192.168.5.2`、`sudo tcpdump -D`；不能将其视为通过 |
 | 防火墙处于锁定模式 | 管理员 shell 查看 `journalctl -u ccvm-firewall` 和 `sudo nft -c -f /etc/ccvm/firewall.nft` |
 | TUN 起不来 | 查看 `journalctl -u ccvm-tun -n 100`，核对 sing-box 版本及配置检查结果 |
-| DNS / TLS 失败 | 核对 TUN、DoH 和时钟；本设计未配置本地 DNS 回退 |
-| 端口转发、UDP、QUIC 或 Docker 网络不可用 | 这些不在本方案的支持范围内 |
-| Claude 401 / 403 | 查看 Claude doctor 与账号状态；网络验收不等于账号授权有效 |
+| DNS / TLS 失败 | 核对 TUN、DoH 和时钟 |
+| 端口转发、UDP、QUIC、Docker 网络不通 | 设计如此：VM 只放行经节点的 TCP |
+| Claude 401 / 403 | 运行 `claude doctor`，检查账号登录状态 |
 
 `CCVM_FORCE=1 bash scripts/enter.sh` 可在部分检查失败时进入排障；它不绕过专用 Lima 全局配置检查。修复并重新通过验收后再使用 Claude。
 

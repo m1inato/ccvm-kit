@@ -35,7 +35,7 @@ CCVM_NAME=work-vm CCVM_LIMA_HOME="$HOME/.lima-work-vm" bash scripts/setup.sh
 
 ## 哪些值属于协议配置
 
-以下是各组件共享的网络约定，保留在发布代码中，并非个人机器信息：
+下面这些是各组件共享的固定值：
 
 - `127.0.0.1:17897`：Mac 上的专用回环入口。
 - `192.168.5.2:17897`：Lima 默认 user-mode 网络内访问该入口的地址。
