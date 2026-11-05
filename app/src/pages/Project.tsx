@@ -162,9 +162,9 @@ export function ProjectPage({ name }: { name: string }) {
         <section className="center with-term">
           {snap.vmPackages.tmuxInstalled === false && (
             <div className="callout row">
-              <span className="grow">VM 里没有 tmux，内嵌终端开不了新会话：先补装软件包。</span>
+              <span className="grow">VM 里没有 tmux，内嵌终端开不了新会话：先在首页「更新 VM」。</span>
               <button className="btn sm" onClick={() => go('/')}>
-                去首页补装
+                去首页更新
               </button>
             </div>
           )}

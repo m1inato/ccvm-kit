@@ -44,7 +44,7 @@ bash scripts/check.sh --quick --json
 | `setup.sh [--json]` | 一键部署，步骤为 `setup.listener` → `setup.vm` → `setup.install` → `setup.baseline` → `setup.verify` |
 | `rebaseline.sh [--dry-run \| --accept IP] [--json]` | 不带参数时要求输入 yes。`--dry-run` 只测量；`--accept IP` 重新测量，Mac 与 VM 出口都等于 IP 才写入 |
 | `preflight.sh [--json]` | 部署前检查，不需要 VM，逐项报告 |
-| `upgrade.sh [--json]` | 给已部署的 VM 补装软件包（`setup.sh` 看到已安装就跳过，早先部署的 VM 可能缺 `git`、`tmux`）。只装包，不碰防火墙、TUN、sing-box 和 DNS；步骤为 `upgrade.packages` → `upgrade.verify`，后者跑完整验收，事件并入同一个流 |
+| `upgrade.sh [--json]` | 更新已部署的 VM（`setup.sh` 看到已安装就跳过网络层安装，早先部署的 VM 会缺后来加的东西）。按级别逐步补上：1 = `git`、`tmux`；2 = networkd 保留 TUN 的策略路由（`ManageForeignRoutingPolicyRules=no`）+ TUN 看门狗（每 30 秒检查，路由丢了就重启 TUN）。不改防火墙规则、sing-box 配置和 DNS；`setup.sh` 每次也会跑一遍；步骤为 `upgrade.packages` → `upgrade.verify`，后者跑完整验收，事件并入同一个流 |
 | `vm.sh start\|stop\|status [--json]` | 启停 VM；每次都先检查 Lima 全局配置，启动后核对实际配置 |
 | `workspace.sh list\|claude\|clone URL\|kill-session 会话名\|rename-session 旧名 新名 [--json]` | VM 里 `~/work` 的项目与 tmux 会话、Claude Code 是否已安装、以 cc 身份克隆、结束会话、给会话改名 |
 | `hooks.sh enable\|disable\|status [--json]` | 「Claude 做完了」字幕用的 hook：装在 VM 里 root 所有的 managed-settings 目录里，cc 改不了 |
@@ -73,7 +73,7 @@ id 是 App 与脚本之间的接口。可以改说明文字，改 id 要同时�
 | `baseline.present` | 有出口基线文件，内容是 IPv4 |
 | `rebaseline.confirmed` | 基线已按确认的 IP 更新 |
 | `vm.exists` | VM 实例存在 |
-| `vm.upgrade` | VM 里的软件包已补装到套件要求的级别（`guest/upgrade.sh`：读 `/var/lib/ccvm/level`，不存在当作 0，按顺序执行更高级别的步骤，每完成一步写入新级别） |
+| `vm.upgrade` | VM 已更新到套件要求的级别（`guest/upgrade.sh`：读 `/var/lib/ccvm/level`，不存在当作 0，按顺序执行更高级别的步骤，每完成一步写入新级别） |
 | `vm.running` | VM 正在运行 |
 
 ### VM 内（`guest/selfcheck.sh`）
@@ -83,6 +83,7 @@ id 是 App 与脚本之间的接口。可以改说明文字，改 id 要同时�
 | `vm.firewall_active` | 防火墙服务运行中 | ✓ |
 | `vm.firewall_main_rules` | 主规则已加载（失败表示处于锁定模式） | ✓ |
 | `vm.tun_up` | TUN 服务运行且 `sb-tun` 存在 | ✓ |
+| `vm.tun_routes` | TUN 的策略路由在：`ip rule` 里有指向表 2022 的规则，表 2022 里有经 `sb-tun` 的路由。TUN 进程还在、路由却没了（例如系统更新重启了 networkd）时，流量进不了 TUN，VM 断网 | ✓ |
 | `vm.egress_reachable` | cc 用户在没有代理变量时经 TUN 出网 | ✓ |
 | `egress.vm_matches_baseline` | VM 出口 = 基线 | ✓ |
 | `vm.nftables_masked` | 通用 `nftables.service` 已屏蔽 | |

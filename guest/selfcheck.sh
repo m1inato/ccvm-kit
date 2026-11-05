@@ -42,6 +42,9 @@ check vm.firewall_active "防火墙服务运行中" systemctl is-active --quiet 
 main_rules_loaded() { local r; r="$(nft list chain inet ccvm output 2>/dev/null)" || return 1; [[ "$r" == *"dport 17897"* ]]; }
 check vm.firewall_main_rules "主防火墙规则已加载（不是锁定模式）" main_rules_loaded
 check vm.tun_up "TUN 服务运行中且 sb-tun 存在" bash -c 'systemctl is-active --quiet ccvm-tun.service && ip link show sb-tun'
+# TUN 进程在、策略路由却没了（例如系统更新重启了 networkd）：流量进不了 TUN，VM 断网。单独报出来，原因才看得清
+tun_routes_ok() { ip rule show 2>/dev/null | grep -q 'lookup 2022' && [ -n "$(ip route show table 2022 2>/dev/null)" ]; }
+check vm.tun_routes "TUN 的策略路由在（ip rule 指向表 2022，表里有经 sb-tun 的路由）" tun_routes_ok
 
 egress="$(as_cc curl -fsS --max-time 25 "$TRACE_URL" 2>/dev/null | awk -F= '$1=="ip"{print $2}')"
 if [ -n "$egress" ]; then pass vm.egress_reachable "VM（cc 用户，无代理变量）可经 TUN 出网：$egress"; else fail vm.egress_reachable "VM 经 TUN 出网失败"; fi

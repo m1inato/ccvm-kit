@@ -80,11 +80,11 @@ export function WorkspacePage() {
         {snap.vmPackages.needsUpgrade && running && (
           <div className="callout row" style={{ marginBottom: 16 }}>
             <span className="grow">
-              <b>VM 需要补装软件包</b>
+              <b>VM 需要更新</b>
               <span className="muted">
                 {' '}
                 {snap.vmPackages.tmuxInstalled === false ? '没有 tmux，内嵌终端用不了。' : ''}
-                早先部署的 VM 缺后来新加的包（git、tmux），补装只装软件包，不碰网络配置，完成后自动验收。
+                早先部署的 VM 缺后来加的东西：git、tmux，以及「系统更新重启网络服务后断网」的修复（级别 {snap.vmPackages.level ?? '?'} → {snap.vmPackages.target ?? '?'}）。不改防火墙规则和 sing-box 配置，完成后自动验收。
               </span>
             </span>
             <button
@@ -95,7 +95,7 @@ export function WorkspacePage() {
                 if (id) go(`/jobs/${id}`);
               })}
             >
-              补装
+              更新 VM
             </button>
           </div>
         )}

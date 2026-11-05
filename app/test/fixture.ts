@@ -40,6 +40,7 @@ export const SELFCHECK_OK = [
   'PASS vm.firewall_active 防火墙服务运行中',
   'PASS vm.firewall_main_rules 主防火墙规则已加载（不是锁定模式）',
   'PASS vm.tun_up TUN 服务运行中且 sb-tun 存在',
+  'PASS vm.tun_routes TUN 的策略路由在',
   'PASS vm.egress_reachable VM 可经 TUN 出网：203.0.113.7',
   'PASS egress.vm_matches_baseline VM 出口 = 基线 203.0.113.7',
   'EGRESS 203.0.113.7',

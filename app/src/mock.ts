@@ -1,5 +1,5 @@
 // 浏览器预览用的演示数据（不在 Electron 里加载）。IP、项目、节点名都是示例。
-// 用 ?demo=ok（自带核心）| cv（Clash Verge）| egress | node | busy | welcome | setup | stopped | shares（共享文件夹）| upgrade（需要补装软件包）切换场景；
+// 用 ?demo=ok（自带核心）| cv（Clash Verge）| egress | node | busy | welcome | setup | stopped | shares（共享文件夹）| upgrade（VM 需要更新）切换场景；
 // 加 &theme=light 或 &theme=dark 指定外观。
 import { renderClashScript, gitUrlProblem, projectNameFromUrl } from '../core/parsers';
 import { reportMarkdown } from '../core/report';
@@ -144,7 +144,7 @@ function initial(scenario: string): Snapshot {
       latencyTestUrl: 'https://www.gstatic.com/generate_204', theme: 'system', clashController: '',
     },
     shares: { applied: [], pendingApply: false, problems: {} },
-    vmPackages: { level: 1, target: 1, tmuxInstalled: true, needsUpgrade: false },
+    vmPackages: { level: 2, target: 2, tmuxInstalled: true, needsUpgrade: false },
     clashController: { address: '', secretSet: false },
     paths: { kit: '/Applications/CCVM.app/Contents/Resources/kit', state: '~/Library/Application Support/CCVM/state', baselineFile: 'expected-ip.txt', jobs: 'jobs' },
     kitVersion: '2.3.0', appVersion: '0.1.0',
@@ -201,7 +201,7 @@ function initial(scenario: string): Snapshot {
     snap.lastFull = snap.lastFull && { ...snap.lastFull, checks: fix(snap.lastFull.checks) };
   }
   if (scenario === 'upgrade') {
-    snap.vmPackages = { level: 0, target: 1, tmuxInstalled: false, needsUpgrade: true };
+    snap.vmPackages = { level: 1, target: 2, tmuxInstalled: true, needsUpgrade: true };
   }
   if (scenario === 'busy') {
     snap.jobs = [{ id: 'demo-leak', kind: 'leaktest', title: '断流测试', args: ['--json'], state: 'running', startedAt: now - 12_000 }, cloneJob];
@@ -482,9 +482,9 @@ export function createMockBridge(): Bridge {
     ],
     pullFile: async (p: string) => job('pull', `下载 ${base(p)}`, 1200, () => caption(`下载 ${base(p)}：完成`)),
     vmUpgrade: () =>
-      job('vm-upgrade', '补装 VM 软件包', 2500, () => {
-        update({ vmPackages: { level: 1, target: 1, tmuxInstalled: true, needsUpgrade: false } });
-        caption('VM 软件包已补装，完整验收通过');
+      job('vm-upgrade', '更新 VM', 2500, () => {
+        update({ vmPackages: { level: 2, target: 2, tmuxInstalled: true, needsUpgrade: false } });
+        caption('VM 已更新，完整验收通过');
       }),
     cliStatus: async () => cli,
     installCli: async () => {

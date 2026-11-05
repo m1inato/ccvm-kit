@@ -93,3 +93,67 @@ class UpgradeTests(ScriptHarness):
         self.assertEqual(self.guest("pending_steps 2 1").stdout.split(), [])
         # 套件要求的级别必须正好是 guest/upgrade.sh 里的步骤数
         self.assertEqual(int(self.guest("highest_step").stdout), lib_level())
+
+
+class TunRouteFixTests(ScriptHarness):
+    """Step 2: networkd keeps sing-box's policy rules; a watchdog restarts the TUN when they are gone anyway."""
+
+    def test_step_2_installs_networkd_setting_and_watchdog(self):
+        root = self.root / "vmroot"
+        self.stub("systemctl", 'printf "systemctl %s\\n" "$*" >> "$STUB_LOG"')
+        result = subprocess.run([BASH_EXEC, "-c", 'CCVM_UPGRADE_LIB=1 . "$0"; step_2', str(KIT / "guest/upgrade.sh")],
+                                env=self.env | {"CCVM_ROOT": str(root)}, text=True, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        conf = (root / "etc/systemd/networkd.conf.d/50-ccvm-tun.conf").read_text()
+        self.assertRegex(conf, r"(?m)^\[Network\]$")
+        self.assertRegex(conf, r"(?m)^ManageForeignRoutingPolicyRules=no$")
+        watchdog = root / "usr/local/lib/ccvm/tun-watchdog"
+        self.assertTrue(watchdog.stat().st_mode & 0o111)
+        timer = (root / "etc/systemd/system/ccvm-tun-watchdog.timer").read_text()
+        self.assertIn("OnUnitActiveSec=30", timer)
+        self.assertIn("ExecStart=/usr/local/lib/ccvm/tun-watchdog", (root / "etc/systemd/system/ccvm-tun-watchdog.service").read_text())
+        calls = self.log.read_text()
+        self.assertIn("systemctl daemon-reload", calls)
+        self.assertIn("systemctl enable --now ccvm-tun-watchdog.timer", calls)
+
+    def watchdog(self, active=True, rules=True, routes=True, since_us=0):
+        text = (KIT / "guest/upgrade.sh").read_text()
+        program = re.search(r"<<'WDEOF' \|\| return 1\n(.*?)\nWDEOF", text, re.S).group(1)
+        self.stub("systemctl", 'case "$1" in\n'
+                  '  is-active) [ "$STUB_ACTIVE" = 1 ] ;;\n'
+                  '  show) echo "$STUB_SINCE" ;;\n'
+                  '  restart) echo "restart $2" >> "$STUB_LOG" ;;\n'
+                  'esac')
+        self.stub("ip", 'case "$1 $2" in\n'
+                  '  "link show") exit 0 ;;\n'
+                  '  "rule show") [ "$STUB_RULES" = 1 ] && echo "9001: from all lookup 2022 suppress_prefixlength 0"; echo "32766: from all lookup main" ;;\n'
+                  '  "route show") [ "$STUB_ROUTES" = 1 ] && echo "0.0.0.0/1 via 172.31.255.2 dev sb-tun table 2022" ;;\n'
+                  'esac; exit 0')
+        self.stub("logger", "exit 0")
+        if self.log.exists():
+            self.log.unlink()
+        r = subprocess.run(["/bin/sh", "-s"], input=program, text=True, capture_output=True, timeout=30,
+                           env=self.env | {"STUB_ACTIVE": "1" if active else "0", "STUB_RULES": "1" if rules else "0",
+                                           "STUB_ROUTES": "1" if routes else "0", "STUB_SINCE": str(since_us)})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return self.log.read_text() if self.log.exists() else ""
+
+    def test_watchdog_restarts_tun_only_when_routes_are_gone(self):
+        self.assertEqual(self.watchdog(), "")                                   # 正常
+        self.assertIn("restart ccvm-tun.service", self.watchdog(rules=False))   # ip rule 没了
+        self.assertIn("restart ccvm-tun.service", self.watchdog(routes=False))  # 表 2022 空了
+        self.assertEqual(self.watchdog(active=False, rules=False), "")          # 断流测试停了 TUN：不管
+        uptime_us = int(float(open("/proc/uptime").read().split()[0]) * 1_000_000)
+        self.assertEqual(self.watchdog(rules=False, since_us=uptime_us), "")    # 刚启动：sing-box 还在建路由
+
+    def test_selfcheck_reports_missing_policy_routes(self):
+        text = (KIT / "guest/selfcheck.sh").read_text()
+        func = re.search(r"^tun_routes_ok\(\) \{.*\}$", text, re.M).group(0)
+        self.stub("ip", 'case "$1 $2" in\n'
+                  '  "rule show") [ "$STUB_RULES" = 1 ] && echo "9001: from all lookup 2022 suppress_prefixlength 0" ;;\n'
+                  '  "route show") echo "0.0.0.0/1 via 172.31.255.2 dev sb-tun table 2022" ;;\n'
+                  'esac; exit 0')
+        for rules, ok in [("1", 0), ("0", 1)]:
+            r = subprocess.run([BASH_EXEC, "-c", func + "\ntun_routes_ok"], env=self.env | {"STUB_RULES": rules},
+                               text=True, capture_output=True, timeout=30)
+            self.assertEqual(r.returncode, ok, rules)

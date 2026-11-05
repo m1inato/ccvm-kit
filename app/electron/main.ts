@@ -395,9 +395,9 @@ async function dispatch(name: string, args: unknown[]): Promise<unknown> {
       return controller.vmStop();
     case 'vmUpgrade': {
       const ok = await confirm(
-        '补装 VM 软件包？',
-        '会在 VM 里以 root 运行 apt-get，安装早先部署时还没有的软件包（git、tmux），经固定出口下载。不碰防火墙、TUN、sing-box 和 DNS 配置。\n\n完成后自动做一次完整验收。进行期间不做别的检查和独占任务。',
-        '补装',
+        '更新 VM？',
+        '按顺序补上早先部署时还没有的东西：\n• 软件包 git、tmux（以 root 运行 apt-get，经固定出口下载）\n• 系统更新重启网络服务后断网的修复：networkd 保留 TUN 的策略路由，加一个 TUN 看门狗（路由丢了自动重启 TUN）\n\n不改防火墙规则、sing-box 配置和 DNS。完成后自动做一次完整验收；进行期间不做别的检查和独占任务。',
+        '更新',
         'question',
       );
       if (!ok) return null;

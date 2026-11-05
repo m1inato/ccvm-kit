@@ -31,15 +31,20 @@ ok "VM 就绪：$(vm sh -c '. /etc/os-release; echo $PRETTY_NAME') / $(vm uname 
 
 step setup.install "3/5 安装 VM 网络层（sing-box TUN + 防火墙 + cc 用户）"
 if vm sudo test -e /var/lib/ccvm/installed; then
-  ok "已安装，跳过（早先部署的 VM 缺软件包时，用 scripts/upgrade.sh 补装）"
+  ok "已安装，跳过"
 else
   warn "引导期（此步骤完成前）VM 的系统流量（apt/snap/NTP 等）走 Mac 当前网络；此时不要登录 Claude 或放入任何凭据"
   stage="$(vm mktemp -d /tmp/ccvm-stage.XXXXXX)"
   limactl copy "$KIT/config/sing-box.json" "$KIT/config/firewall.nft.in" "$KIT/config/lockdown.nft" \
     "$KIT/guest/install.sh" "$VM:$stage/"
-  vm sudo bash "$stage/install.sh" "$stage" "$VM_LEVEL"
+  vm sudo bash "$stage/install.sh" "$stage" "$INSTALL_LEVEL"
   vm sudo rm -rf -- "$stage"
 fi
+
+# 新装和已有的 VM 都走一遍升级步骤：早先部署的 VM 也能拿到后来加的修复（已是最新时什么也不做）
+info "VM 升级步骤（目标级别 ${VM_LEVEL}）"
+rc=0; vm_script upgrade.sh "$VM_LEVEL" | relay_guest || rc=$?
+[ "$rc" -eq 0 ] || die "VM 升级步骤没有完成（可以重跑 setup.sh 或 upgrade.sh）"
 
 step setup.baseline "4/5 出口基线"
 mkdir -p "$STATE"

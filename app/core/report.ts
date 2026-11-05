@@ -11,7 +11,7 @@ export const CHECK_GROUPS: { title: string; ids: string[] }[] = [
   {
     title: 'VM 网络',
     ids: [
-      'vm.firewall_active', 'vm.firewall_main_rules', 'vm.tun_up', 'vm.egress_reachable', 'egress.vm_matches_baseline',
+      'vm.firewall_active', 'vm.firewall_main_rules', 'vm.tun_up', 'vm.tun_routes', 'vm.egress_reachable', 'egress.vm_matches_baseline',
       'vm.nftables_masked', 'vm.resolv_static', 'vm.ipv6_off', 'vm.no_host_mounts', 'vm.dns_doh', 'vm.anthropic_reachable',
     ],
   },
@@ -42,6 +42,7 @@ const LABELS: Record<string, string> = {
   'vm.firewall_active': '防火墙服务运行中',
   'vm.firewall_main_rules': '主规则（不是锁定模式）',
   'vm.tun_up': 'TUN 运行中',
+  'vm.tun_routes': 'TUN 策略路由在',
   'vm.egress_reachable': 'cc 经 TUN 出网',
   'egress.vm_matches_baseline': 'VM 出口 = 基线',
   'vm.nftables_masked': '通用 nftables 已屏蔽',

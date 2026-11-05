@@ -52,6 +52,15 @@
 - DHCP DNS 在 Wi-Fi / 热点 / 有线之间切换时的更新，`launchctl bootstrap` / `bootout` 在各 macOS 版本上的行为，都要上机验证。
 - 测延迟默认访问 `https://www.gstatic.com/generate_204`，可以在 设置 → 网络出口 里改（只接受不带账号密码的 http / https 地址）。口径和 Clash Verge 对齐：临时核心开 `unified-delay`（不计建连和握手；正式核心不开，它不影响流量走哪里），每个节点先热身一次、取第二次的结果，超时 5 秒。想和 Clash Verge 的数字对得上，就填它设置里的同一个测试地址。
 
+## 系统更新后 VM 断网：怎么防、怎么发现、怎么恢复
+
+现象：VM 里做了系统更新（或别的原因重启了 `systemd-networkd`）之后断网。原因是 networkd 启动时默认清掉「不是它自己建的」策略路由，sing-box 的 `ip rule`（查表 2022）就没了。TUN 进程还在运行，`Restart=always` 不会触发，但流量进不了 TUN。防火墙还在，所以只是断网，不会改走直连。
+
+- **防**：`/etc/systemd/networkd.conf.d/50-ccvm-tun.conf` 写 `ManageForeignRoutingPolicyRules=no`，networkd 不再管别人的策略路由。networkd 下次启动时读到它，不需要现在重启网络。
+- **发现**：快速检查新增 `vm.tun_routes`（`ip rule` 有指向表 2022 的规则、表 2022 有经 `sb-tun` 的路由）。失败时首页显示「TUN 的路由丢了」，而不是笼统的「出口不对」。
+- **恢复**：`ccvm-tun-watchdog.timer` 每 30 秒检查一次，TUN 在运行而路由没了就重启 TUN，让 sing-box 重建（启动后 20 秒内不算；断流测试停 TUN 时不管）。
+- **进入正式版本**：这些是 `guest/upgrade.sh` 的第 2 级。新装的 VM 由 `setup.sh` 在安装后跑升级步骤；已有的 VM 在首页「VM 需要更新」卡片点「更新 VM」，或运行 `bash scripts/upgrade.sh`。`setup.sh` 每次都会跑一遍升级步骤，已是最新时什么也不做。
+
 ## Clash Verge 模式的「连接」面板
 
 用 Clash Verge 时，项目页「连接」分页读它的外部控制器，列出来自 VM 的连接并核对链路。

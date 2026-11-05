@@ -434,7 +434,7 @@ export class Controller extends EventEmitter {
 
   /** 调用前主进程已经弹框确认过 */
   vmUpgrade(): string {
-    return this.startJob('vm-upgrade', '补装 VM 软件包', 'upgrade.sh', []);
+    return this.startJob('vm-upgrade', '更新 VM', 'upgrade.sh', []);
   }
 
   clone(url: string): string {
@@ -508,9 +508,9 @@ export class Controller extends EventEmitter {
           .then(() => this.quickCheck('应用共享后'));
         break;
       case 'vm-upgrade':
-        // upgrade.sh 补装完会跑完整验收，事件并在同一个流里
+        // upgrade.sh 更新完会跑完整验收，事件并在同一个流里
         if (result && job.state !== 'cancelled' && result.values.mode === 'full') this.state.lastFull = toRecord('full', result);
-        this.caption(ok ? 'ok' : 'error', ok ? 'VM 软件包已补装，完整验收通过' : `补装没有完成：${job.reason ?? ''}`);
+        this.caption(ok ? 'ok' : 'error', ok ? 'VM 已更新，完整验收通过' : `VM 更新没有完成：${job.reason ?? ''}`);
         void this.refreshProjects();
         break;
       case 'push':

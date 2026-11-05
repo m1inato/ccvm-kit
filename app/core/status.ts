@@ -57,6 +57,16 @@ export function issuesFromCheck(rec: CheckRecord | undefined): Issue[] {
       checkId: 'vm.tun_up',
     });
     handled.add('vm.tun_up').add('vm.egress_reachable').add('egress.vm_matches_baseline');
+  } else if (has('vm.tun_routes')) {
+    // TUN 进程还在，路由没了：多半是系统更新重启了 networkd。看门狗会在 30 秒内重启 TUN
+    issues.push({
+      key: 'tun_down:routes',
+      kind: 'tun_down',
+      title: 'TUN 的路由丢了',
+      detail: 'TUN 还在运行，但策略路由没了（常见于系统更新重启了网络服务），流量进不了 TUN：VM 现在断网，防火墙还在，不会改走直连。看门狗会在 30 秒内重启 TUN；没有看门狗的旧 VM 先在首页「更新 VM」，或者停止再启动 VM。',
+      checkId: 'vm.tun_routes',
+    });
+    handled.add('vm.tun_routes').add('vm.egress_reachable').add('egress.vm_matches_baseline');
   }
 
   const hostBad = has('egress.host_matches_baseline');
