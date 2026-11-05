@@ -4,7 +4,7 @@
 # cc 看到的属主是 cc；cc 新建的文件在 Mac 上属于你。cc 进不了 /mnt/ccvm-raw（0700 root）。
 #   apply <Mac uid> <Mac gid> <名字…>  安装 bindfs、写 /etc/ccvm/shares.list、装并重启 ccvm-shares.service，最后核对
 #   remove                              停用并删除服务，卸载 /home/cc/mac 下的 bindfs
-#   verify <名字…>                      只核对，不改任何东西
+#   verify <名字…>                      只核对，不改任何东西（每个名字输出 VIEW <名字> 1|0）
 # 输出「PASS|FAIL share.guest <说明>」。
 set -uo pipefail
 LIST=/etc/ccvm/shares.list
@@ -20,10 +20,13 @@ valid_name() { [[ "$1" =~ $NAME_RE ]] && [ "$1" != . ] && [ "$1" != .. ]; }
 verify() {
   local name missing=() n=0
   for name in "$@"; do
+    # 每个名字一行 VIEW <名字> 1|0：宿主端据此标出哪个没挂上
     if [ "$(findmnt -rn -o FSTYPE --mountpoint "$VIEW/$name" 2>/dev/null)" = fuse.bindfs ]; then
       n=$((n + 1))
+      echo "VIEW $name 1"
     else
       missing+=("$VIEW/$name")
+      echo "VIEW $name 0"
     fi
   done
   if [ "${#missing[@]}" -eq 0 ]; then

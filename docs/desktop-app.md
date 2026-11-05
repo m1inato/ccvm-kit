@@ -114,6 +114,7 @@
 - `share.sh apply`：先逐个检查路径（有一个不行就停，VM 不动）→ 停 VM → `limactl edit --set '.mounts = [...]'` 写进 Lima 实例配置（字符串全部经 `json_str` 编码）→ 启动并核对实际配置 → 在 VM 里设置 bindfs。`_config/default.yaml`、`override.yaml` 仍然一律拒绝：共享只能经实例配置进来。
 - VM 里：Lima 的 virtiofs 挂在 `/mnt/ccvm-raw/<名字>`（父目录 0700 root，cc 进不去），`ccvm-shares.service` 用 bindfs 映射到 `/home/cc/mac/<名字>`：cc 看到的属主是 cc，cc 新建的文件在 Mac 上属于你（`--create-for-user` 是你的 uid）。
 - 检查：`lima.effective_config` 要求实例的挂载集合**正好等于** `shares.txt`（多一个、少一个都变红），每个路径还要再过一遍禁止规则；完整验收的 `vm.no_host_mounts` 只放行 `/mnt/ccvm-raw/<名字>`（virtiofs）和 `/home/cc/mac/<名字>`（bindfs），其他宿主挂载照样变红。
+- 「已应用」怎么判断：`shares.txt` 写了、Lima 的原始目录挂上了还不够，cc 看到的 `/home/cc/mac/<名字>` 也要是 bindfs 挂载。`share.sh status` 在 VM 运行时逐个核对（每次快速检查后顺带刷新）。有没挂上的、或者上次应用失败了，设置页标出来，按钮变成「重新应用并重启 VM」（设置没改也能点）；顶栏标记写「N 个没挂上」。这是功能问题，不是隔离问题，状态不变红。
 - 状态：共享开着仍然是绿色「受保护」，旁边常驻「共享 N 个文件夹 · 读写」（顶栏、桌面胶囊、项目页「链路」面板、导出的验收记录都有）。
 
 **哪些保证变了**

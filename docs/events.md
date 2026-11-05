@@ -49,7 +49,7 @@ bash scripts/check.sh --quick --json
 | `workspace.sh list\|claude\|clone URL\|kill-session 会话名\|rename-session 旧名 新名 [--json]` | VM 里 `~/work` 的项目与 tmux 会话、Claude Code 是否已安装、以 cc 身份克隆、结束会话、给会话改名 |
 | `hooks.sh enable\|disable\|status [--json]` | 「Claude 做完了」字幕用的 hook：装在 VM 里 root 所有的 managed-settings 目录里，cc 改不了 |
 | `enter.sh [--project 名称] [--session 会话名\|auto] \| --attach 会话名` | 交互入口（没有 JSON 模式）。`--session` 检查后新建或接入 tmux 会话，`auto` 按 `<项目>-<第一个空闲序号>` 取名；`--attach` 只接入已有会话，不做检查 |
-| `share.sh status\|apply [--json]` | 共享文件夹（读写）。`status` 列出 `$STATE/shares.txt` 里的共享并逐个检查路径，不碰 VM；`apply` 检查路径 → 停 VM → `limactl edit --set '.mounts = [...]'` → 启动并核对实际配置 → 在 VM 里设置 bindfs 映射。步骤为 `share.check` → `share.stop` → `share.edit` → `share.start` → `share.guest` |
+| `share.sh status\|apply [--json]` | 共享文件夹（读写）。`status` 列出 `$STATE/shares.txt` 里的共享并逐个检查路径；VM 在运行时再到 VM 里只读核对 cc 看到的 `/home/cc/mac/<名字>` 挂没挂上；`apply` 检查路径 → 停 VM → `limactl edit --set '.mounts = [...]'` → 启动并核对实际配置 → 在 VM 里设置 bindfs 映射。步骤为 `share.check` → `share.stop` → `share.edit` → `share.start` → `share.guest` |
 | `files.sh list\|mkdir\|rm <VM路径> [--json]` | 浏览 VM 里 cc 的家目录；只能碰 `/home/cc` 下面，不能删 `/home/cc`、`/home/cc/mac`、`/home/cc/mac/<名字>` |
 | `files.sh push <Mac源路径> <VM目标目录> [--json]` | 上传普通文件或文件夹（顶层不能是符号链接），`tar` 管道以 cc 身份解包 |
 | `files.sh pull <VM文件> <Mac目标文件> [--force] [--json]` | 只下载单个普通文件，不跟符号链接、不支持目录；Mac 上目标已存在时要 `--force` |
@@ -210,8 +210,10 @@ id 是 App 与脚本之间的接口。可以改说明文字，改 id 要同时�
 `share.sh status --json` 为 `shares.txt` 里的每个共享输出一条（`problem` 为空表示可以共享）：
 
 ```json
-{"v":1,"type":"item","kind":"share","path":"/Volumes/Work/my-api","name":"my-api","mount_point":"/mnt/ccvm-raw/my-api","view":"/home/cc/mac/my-api","problem":""}
+{"v":1,"type":"item","kind":"share","path":"/Volumes/Work/my-api","name":"my-api","mount_point":"/mnt/ccvm-raw/my-api","view":"/home/cc/mac/my-api","problem":"","mounted":true}
 ```
+
+`mounted` 是 VM 里 cc 看到的目录挂没挂上；VM 没运行或读不到时为 `null`（不确定，不当作挂上了）。只写了 `shares.txt`、原始目录挂上了，不等于「已应用」。
 
 名字取路径最后一级目录名，`[A-Za-z0-9._-]` 以外的字符（按字节）换成 `_`，重名依次加 `-2`、`-3`。这个规则只在 `scripts/lib.sh` 的 `share_names` 里实现，App 显示名字时读这里的输出。
 

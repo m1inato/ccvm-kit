@@ -44,9 +44,10 @@ export function StatusPill({ snap, onClick }: { snap: Snapshot; onClick?: () => 
 export function SharesBadge({ snap, onClick }: { snap: Snapshot; onClick?: () => void }) {
   const n = snap.shares.applied.length;
   if (!n) return null;
+  const unmounted = snap.shares.applied.filter((s) => s.mounted === false).length;
   return (
     <button className="share-badge" onClick={onClick} title={snap.shares.applied.map((s) => `${s.path} → ${s.view}`).join('\n')}>
-      共享 {n} 个文件夹 · 读写
+      共享 {n} 个文件夹 · 读写{unmounted ? ` · ${unmounted} 个没挂上` : ''}
     </button>
   );
 }

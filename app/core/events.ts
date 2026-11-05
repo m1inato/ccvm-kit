@@ -48,6 +48,7 @@ export function parseEventLine(line: string): ScriptEvent | null {
         return {
           v: 1, type: 'item', kind: 'share', path: e.path, name: e.name, mount_point: isStr(e.mount_point) ? e.mount_point : '',
           view: isStr(e.view) ? e.view : '', problem: isStr(e.problem) ? e.problem : '',
+          mounted: typeof e.mounted === 'boolean' ? e.mounted : null,
         };
       }
       if (e.kind === 'file') {

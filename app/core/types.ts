@@ -42,6 +42,8 @@ export interface ShareItem {
   view: string;
   /** 为空表示可以共享 */
   problem: string;
+  /** VM 里 cc 看到的目录挂上了没有；VM 没运行或读不到时为 null（不确定） */
+  mounted: boolean | null;
 }
 
 /** files.sh list 列出的一个条目（类型字段叫 file_type：事件自己的 type 已经是 item） */
@@ -244,9 +246,11 @@ export interface VmPackages {
 
 export interface SharesState {
   /** 最近一次 share.sh status：shares.txt 里（也就是应用过的）共享 */
-  applied: { path: string; name: string; view: string }[];
+  applied: { path: string; name: string; view: string; mounted: boolean | null }[];
   /** 设置和 shares.txt 的内容不一致，需要「应用并重启 VM」 */
   pendingApply: boolean;
+  /** 设置没变，但有共享在 VM 里没挂上，或者上次应用失败了：可以「重新应用」 */
+  needsRetry: boolean;
   /** 路径 → 不能共享的原因（脚本的结论优先，没跑过脚本的用界面即时提示） */
   problems: Record<string, string>;
 }

@@ -33,6 +33,7 @@
 - 按共享文件夹修复的同一思路：`guest/upgrade.sh` 运行 apt 前也清掉 Lima 继承的代理变量；`files.sh` 修正 Bash 3.2 下变量紧跟中文标点的写法，并新增静态检查（宿主脚本里 `$变量` 后面不能直接跟非 ASCII 字符）。共享与补装的 apt 测试改为不依赖测试机上是否装了 bindfs。
 - 桌面端：Clash Verge 模式的「连接」面板。只读它的外部控制器（地址只能是本机回环，只允许 `GET /connections`、`/version`、`/proxies/CC-VM-FIXED`），密钥存钥匙串；只看 `cc-vm-in` 的连接，链路不是正好 `[节点, CC-VM-FIXED]` 的在面板里标红（不影响首页状态）。和自带核心的面板共用一个组件。
 - 系统更新后 VM 断网的修复进入正式版本：`guest/upgrade.sh` 第 2 级让 networkd 保留 sing-box 的策略路由（`ManageForeignRoutingPolicyRules=no`），并加 TUN 看门狗（路由丢了 30 秒内重启 TUN）；快速检查新增 `vm.tun_routes`，首页直接说「TUN 的路由丢了」。`setup.sh` 装完后总会跑升级步骤，已有的 VM 用首页的「更新 VM」或 `upgrade.sh`。
+- 共享文件夹「已应用」的判断改为核对 VM 里 cc 看到的目录：`share.sh status` 在 VM 运行时逐个核对，输出 `mounted`；没挂上或上次应用失败时，设置页可以「重新应用并重启 VM」（原来设置没变就点不了）。
 - 桌面胶囊修复：窗口跟内容一样大（原来 480×170 的透明窗口会挡住下面窗口的点击）；按钮第一下就能点（`acceptFirstMouse`）；打开胶囊不再隐藏 Dock 图标；显示器变化后拉回屏幕内；胶囊里的操作失败时显示原因。
 
 - 打包不再生成校验文件；桌面端判断节点是否变化改为逐字段比较内容。项目不使用这类哈希，规则见 `AGENTS.md`。

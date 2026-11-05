@@ -324,7 +324,7 @@ describe('Controller: shared folders and file transfer', () => {
     c.setSharesEnabled(true);
     expect(c.snapshot().shares.pendingApply).toBe(true);
     f.set('mounts', dir + '\n');
-    f.set('shares.out', 'PASS share.guest 已映射 1 个共享文件夹到 /home/cc/mac（读写）\n');
+    f.set('shares.out', 'VIEW app 1\nPASS share.guest 已映射 1 个共享文件夹到 /home/cc/mac（读写）\n');
     const before = c.snapshot().lastQuick!.at;
     const id = c.applyShares();
     expect(fs.readFileSync(path.join(f.state, 'shares.txt'), 'utf8')).toBe(dir + '\n');
@@ -333,8 +333,15 @@ describe('Controller: shared folders and file transfer', () => {
     expect(job.state, job.reason).toBe('done');
     await waitFor(() => c.snapshot().shares.applied.length === 1 && c.snapshot().lastQuick!.at > before && !c.snapshot().checking, 20_000);
     const snap = c.snapshot();
-    expect(snap.shares.applied[0]).toEqual({ path: dir, name: 'app', view: '/home/cc/mac/app' });
+    expect(snap.shares.applied[0]).toEqual({ path: dir, name: 'app', view: '/home/cc/mac/app', mounted: true });
     expect(snap.shares.pendingApply).toBe(false);
+    expect(snap.shares.needsRetry).toBe(false);
+    // VM 里的映射掉了：不是「有改动」，但可以重新应用
+    f.set('shares.out', 'VIEW app 0\nFAIL share.guest 没有挂上：/home/cc/mac/app\n');
+    await c.refreshShares();
+    expect(c.snapshot().shares.applied[0].mounted).toBe(false);
+    expect(c.snapshot().shares.needsRetry).toBe(true);
+    expect(c.snapshot().level).toBe('ok'); // 功能问题，不是隔离问题：不变红
     expect(snap.level, `${snap.headline}：${snap.detail}`).toBe('ok'); // 共享开着仍然是绿色
     expect(JSON.parse(fs.readFileSync(path.join(f.stub, 'edit'), 'utf8').replace(/^\.mounts = /, ''))).toEqual([
       { location: dir, mountPoint: '/mnt/ccvm-raw/app', writable: true },

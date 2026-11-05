@@ -397,6 +397,8 @@ export class Controller extends EventEmitter {
       const result = await this.run('check.sh', ['--quick'], QUICK_TIMEOUT);
       this.state.lastQuick = toRecord('quick', result);
       this.save();
+      // 有共享时顺带核对 VM 里的映射还在不在（VM 重启、bindfs 退出后会掉）
+      if (this.state.shares?.length) void this.refreshShares();
     } finally {
       this.checking = false;
       this.changed();
@@ -630,9 +632,14 @@ export class Controller extends EventEmitter {
       if (problem) problems[p] = problem;
     }
     for (const s of this.state.shares ?? []) if (s.problem) problems[s.path] = s.problem;
+    const applied = (this.state.shares ?? []).map((s) => ({ path: s.path, name: s.name, view: s.view, mounted: s.mounted ?? null }));
+    // 最近一次应用没成功（失败或取消）：shares.txt 已经写了，设置和它一致，原来的按钮就点不了。给出重试
+    const lastJob = this.jobs.list().find((j) => j.kind === 'shares');
+    const lastFailed = !!lastJob && (lastJob.state === 'failed' || lastJob.state === 'cancelled');
     return {
-      applied: (this.state.shares ?? []).map((s) => ({ path: s.path, name: s.name, view: s.view })),
+      applied,
       pendingApply,
+      needsRetry: !pendingApply && (lastFailed || applied.some((a) => a.mounted === false)),
       problems,
     };
   }

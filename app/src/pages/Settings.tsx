@@ -385,7 +385,8 @@ function Shares() {
   const s = snap.settings;
   const sh = snap.shares;
   const busy = snap.jobs.find((j) => j.state === 'running' && j.kind === 'shares');
-  const view = (p: string) => sh.applied.find((a) => a.path === p)?.view;
+  const appliedOf = (p: string) => sh.applied.find((a) => a.path === p);
+  const view = (p: string) => appliedOf(p)?.view;
   return (
     <div className="settings-section">
       <div>
@@ -413,6 +414,8 @@ function Shares() {
               <span className="mono" style={{ wordBreak: 'break-all' }}>{p}</span>
               {sh.problems[p] ? (
                 <span className="tiny err-text">不能共享：{sh.problems[p]}</span>
+              ) : appliedOf(p)?.mounted === false ? (
+                <span className="tiny err-text">VM 里没有挂上：{view(p)} 现在是空的。点「重新应用」再试一次</span>
               ) : view(p) ? (
                 <span className="tiny muted">VM 里：<code>{view(p)}</code></span>
               ) : (
@@ -430,15 +433,16 @@ function Shares() {
           </button>
           <span className="spacer" />
           {sh.pendingApply && <span className="tiny" style={{ color: 'var(--warn)' }}>有改动还没应用</span>}
+          {sh.needsRetry && <span className="tiny err-text">上次没有应用好，或者有文件夹在 VM 里没挂上</span>}
           <button
             className="btn sm primary"
-            disabled={!sh.pendingApply || !!busy || snap.vm.status === 'Missing'}
+            disabled={!(sh.pendingApply || sh.needsRetry) || !!busy || snap.vm.status === 'Missing'}
             onClick={() => run(async () => {
               const id = await act('applyShares');
               if (id) go(`/jobs/${id}`);
             })}
           >
-            {busy ? '正在应用…' : '应用并重启 VM'}
+            {busy ? '正在应用…' : sh.needsRetry ? '重新应用并重启 VM' : '应用并重启 VM'}
           </button>
         </div>
       </div>

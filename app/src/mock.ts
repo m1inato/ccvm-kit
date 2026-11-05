@@ -143,7 +143,7 @@ function initial(scenario: string): Snapshot {
       claudeLoginConfirmed: true, welcomeDone: true, hooksEnabled: true, sharedFolders: [], sharesEnabled: false,
       latencyTestUrl: 'https://www.gstatic.com/generate_204', theme: 'system', clashController: '',
     },
-    shares: { applied: [], pendingApply: false, problems: {} },
+    shares: { applied: [], pendingApply: false, needsRetry: false, problems: {} },
     vmPackages: { level: 2, target: 2, tmuxInstalled: true, needsUpgrade: false },
     clashController: { address: '', secretSet: false },
     paths: { kit: '/Applications/CCVM.app/Contents/Resources/kit', state: '~/Library/Application Support/CCVM/state', baselineFile: 'expected-ip.txt', jobs: 'jobs' },
@@ -189,10 +189,11 @@ function initial(scenario: string): Snapshot {
     snap.settings = { ...snap.settings, sharesEnabled: true, sharedFolders: folders };
     snap.shares = {
       applied: [
-        { path: folders[0], name: 'my-api', view: '/home/cc/mac/my-api' },
-        { path: folders[1], name: 'design_assets', view: '/home/cc/mac/design_assets' },
+        { path: folders[0], name: 'my-api', view: '/home/cc/mac/my-api', mounted: true },
+        { path: folders[1], name: 'design_assets', view: '/home/cc/mac/design_assets', mounted: false },
       ],
       pendingApply: true,
+      needsRetry: false,
       problems: {},
     };
     const fix = (list: CheckEvent[]) =>
@@ -448,9 +449,9 @@ export function createMockBridge(): Bridge {
         const folders = snap.settings.sharesEnabled ? snap.settings.sharedFolders : [];
         const applied = folders.map((p) => {
           const name = base(p).replace(/[^A-Za-z0-9._-]/g, '_');
-          return { path: p, name, view: `/home/cc/mac/${name}` };
+          return { path: p, name, view: `/home/cc/mac/${name}`, mounted: true };
         });
-        update({ shares: { applied, pendingApply: false, problems: {} } });
+        update({ shares: { applied, pendingApply: false, needsRetry: false, problems: {} } });
         caption('共享文件夹已应用，VM 已重启');
       }),
     listFiles: async (p: string) => {

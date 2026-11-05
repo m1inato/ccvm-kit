@@ -108,14 +108,28 @@ class ShareTests(ScriptHarness):
     # ------------------------------------------------------------------ share.sh
     def test_share_status_lists_items_with_names_and_problems(self):
         self.shares(self.home / "projects" / "app", self.home / ".ssh")
-        events = self.events(self.run_script("share.sh", "status", "--json"))
+        events = self.events(self.run_script("share.sh", "status", "--json", STUB_VM_STATUS="Stopped"))
         items = [e for e in events if e["type"] == "item"]
         self.assertEqual([(i["name"], i["view"], i["mount_point"]) for i in items],
                          [("app", "/home/cc/mac/app", "/mnt/ccvm-raw/app"), (".ssh", "/home/cc/mac/.ssh", "/mnt/ccvm-raw/.ssh")])
         self.assertEqual(items[0]["problem"], "")
+        self.assertIsNone(items[0]["mounted"])   # VM 没运行：不确定，不当作挂上了
         self.assertNotEqual(items[1]["problem"], "")
         self.assertEqual(self.values(events)["share_count"], "2")
         self.assertNotIn("shell", self.log.read_text() if self.log.exists() else "")
+
+    def test_share_status_checks_the_cc_views_when_the_vm_runs(self):
+        a, b = self.home / "projects" / "app", self.home / "projects" / "web"
+        b.mkdir()
+        self.shares(a, b)
+        guest = self.write("verify", "VIEW app 1\nVIEW web 0\nFAIL share.guest 没有挂上：/home/cc/mac/web\n")
+        result = self.run_script("share.sh", "status", "--json", STUB_SHARES_OUT=str(guest), STUB_SHARES_RC="1")
+        events = self.events(result)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        items = {e["name"]: e["mounted"] for e in events if e["type"] == "item"}
+        self.assertEqual(items, {"app": True, "web": False})
+        self.assertIs(self.checks(events)["share.guest"], False)
+        self.assertIn("sudo bash -s -- verify app web", self.log.read_text())
 
     def test_share_apply_writes_mounts_with_awkward_paths(self):
         weird = [self.home / "projects" / "with space", self.home / "projects" / "中文项目", self.home / "projects" / "it's \"q\""]
