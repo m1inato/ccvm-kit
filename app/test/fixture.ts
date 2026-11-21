@@ -23,6 +23,8 @@ case "$1" in
     case "$body" in
       *"ccvm-shares.service"*) f=shares ;;
       *"补装软件包（升级步骤）"*) f=upgrade ;;
+      *"list_ports"*) f=ports ;;
+      *"macports.sh list"*) f=macports ;;
       *"VM 内以 cc 身份运行"*) f=workspace ;;
       *) f=selfcheck ;;
     esac
@@ -68,6 +70,17 @@ export function makeFixture(): Fixture {
   write('uname', '#!/bin/bash\ncase "$1" in -s) echo Darwin;; -m) echo arm64;; *) exit 90;; esac\n');
   // host_ip 写成 down 时代理入口不通
   write('curl', `#!/bin/bash\nip="$(cat "${stub}/host_ip" 2>/dev/null || echo 203.0.113.7)"\n[ "$ip" = down ] && exit 7\nprintf 'ip=%s\\n' "$ip"\n`);
+  // ssh -L：真的在 Mac 端口上监听（用 python），stub/ssh.fail 存在时直接失败退出
+  write('ssh', `#!/bin/bash
+printf '%s\\n' "$*" >> "${stub}/ssh.log"
+[ -f "${stub}/ssh.fail" ] && { echo "ssh: connect to host 127.0.0.1 port 60022: Connection refused" >&2; exit 255; }
+for a in "$@"; do case "$a" in 127.0.0.1:*:127.0.0.1:*) spec="$a" ;; esac; done
+port="$(printf '%s' "$spec" | cut -d: -f2)"
+exec python3 -c 'import socket,sys,time
+s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("127.0.0.1", int(sys.argv[1]))); s.listen(); time.sleep(3600)' "$port"
+`);
+  fs.mkdirSync(path.join(root, 'lima', 'ccvm'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'lima', 'ccvm', 'ssh.config'), 'Host lima-ccvm\n  Hostname 127.0.0.1\n');
   fs.writeFileSync(path.join(stub, 'selfcheck.out'), SELFCHECK_OK);
   return {
     root,

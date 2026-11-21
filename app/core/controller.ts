@@ -5,6 +5,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { limaEnv, parseLoginPath, scriptEnv, validateSettingsPaths } from './env';
 import { JobStore } from './jobs';
+import { forwardProblem, Forwards } from './forwards';
+import { portInUse } from './egress';
 import type { CoreManager } from './egress';
 import { gitUrlProblem, parseLimaList, renderClashScript, toProject } from './parsers';
 import { DEFAULT_LATENCY_URL, latencyUrlProblem } from './mihomo';
@@ -21,6 +23,7 @@ import type {
   EgressMode,
   FileListing,
   Issue,
+  PortItem,
   JobKind,
   JobSummary,
   Level,
@@ -47,6 +50,8 @@ export interface Host {
   now?: () => number;
   /** 自带出口核心。没有时只支持 Clash Verge 模式 */
   core?: CoreManager;
+  /** 测试用：替换端口探测、重连间隔 */
+  forwardOptions?: { portInUse?: (port: number) => Promise<boolean>; retryMs?: number; openTimeoutMs?: number };
 }
 
 interface Persisted {
@@ -62,6 +67,10 @@ interface Persisted {
   checksInvalidBefore?: number;
   /** 最近一次 share.sh status 列出的共享 */
   shares?: ShareItem[];
+  /** 最近一次 ports.sh mac list */
+  macPorts?: { ports: number[]; ready?: boolean; at: number; error?: string };
+  /** 最近一次 ports.sh list */
+  ports?: { items: PortItem[]; at: number; error?: string };
   /** 最近一次 workspace.sh list 读到的软件包状态 */
   vmPackages?: { level?: number; target?: number; tmux?: boolean };
 }
@@ -85,6 +94,7 @@ export function defaultSettings(home: string, dataDir: string): Settings {
     sharesEnabled: false,
     latencyTestUrl: DEFAULT_LATENCY_URL,
     theme: 'system',
+    forwards: [],
   };
 }
 
@@ -120,6 +130,7 @@ export class Controller extends EventEmitter {
   private pollingEvents = false;
   private vmSeq = 0;
   private retry?: NodeJS.Timeout;
+  private forwards: Forwards;
   /** 「做完了」：同一项目 5 分钟内只弹一次；「在等你」：同一项目 1 分钟内一次 */
   private doneThrottle = new Throttle(5 * 60_000);
   private waitThrottle = new Throttle(60_000);
@@ -140,8 +151,13 @@ export class Controller extends EventEmitter {
     if (latencyUrlProblem(this.settings.latencyTestUrl)) this.settings.latencyTestUrl = DEFAULT_LATENCY_URL;
     if (!THEMES.includes(this.settings.theme)) this.settings.theme = 'system';
     delete (this.settings as { clashController?: unknown }).clashController;
+    const fw = (this.settings as { forwards?: unknown }).forwards;
+    this.settings.forwards = Array.isArray(fw)
+      ? fw.filter((f): f is { vmPort: number; macPort: number } => !!f && typeof f === 'object' && !forwardProblem((f as { vmPort?: unknown }).vmPort, (f as { macPort?: unknown }).macPort)).map((f) => ({ vmPort: f.vmPort, macPort: f.macPort }))
+      : [];
     this.state = readJson<Persisted>(this.file('app-state.json')) ?? {};
     this.jobs = new JobStore(path.join(host.dataDir, 'jobs'), host.kitDir, this.now);
+    this.forwards = new Forwards({ kitDir: host.kitDir, env: () => this.env(), onChange: () => this.changed(), ...host.forwardOptions });
     this.vm = { name: this.settings.vmName, status: 'Unknown' };
     this.kitVersion = (readText(path.join(host.kitDir, 'VERSION')) ?? 'unknown').trim();
     this.kitBuild = parseBuildInfo(readText(path.join(host.kitDir, 'BUILD')));
@@ -152,6 +168,7 @@ export class Controller extends EventEmitter {
   async init(): Promise<void> {
     this.path = parseLoginPath(await this.host.loginPathOutput().catch(() => undefined));
     await this.refreshVm();
+    this.syncForwards();
     await this.refreshCore();
     void this.refreshShares();
     if (this.vm.status === 'Running') void this.quickCheck();
@@ -169,6 +186,7 @@ export class Controller extends EventEmitter {
     if (this.checkTimer) clearInterval(this.checkTimer);
     if (this.pending) clearTimeout(this.pending);
     if (this.retry) clearTimeout(this.retry);
+    this.forwards.dispose();
     this.removeAllListeners();
   }
 
@@ -359,7 +377,10 @@ export class Controller extends EventEmitter {
         error: /ENOENT|not found/i.test(out.stderr) ? '找不到 limactl（brew install lima）' : (out.stderr.trim().split('\n').pop() ?? 'limactl 读取失败'),
       };
     }
-    if (prev !== this.vm.status) this.changed();
+    if (prev !== this.vm.status) {
+      this.syncForwards();
+      this.changed();
+    }
   }
 
   // ------------------------------------------------------------------ 检查
@@ -567,6 +588,77 @@ export class Controller extends EventEmitter {
       needsRetry: !pendingApply && (lastFailed || applied.some((a) => a.mounted === false)),
       problems,
     };
+  }
+
+  // ------------------------------------------------------------------ 端口
+  private syncForwards(): void {
+    this.forwards.sync(this.settings.forwards, this.vm.status === 'Running');
+  }
+
+  async refreshPorts(): Promise<void> {
+    if (this.vm.status !== 'Running') return;
+    const result = await this.run('ports.sh', ['list'], 30_000);
+    this.state.ports = result.ok ? { items: result.ports, at: this.now() } : { items: this.state.ports?.items ?? [], at: this.now(), error: result.reason ?? '读取端口失败' };
+    this.save();
+    this.changed();
+  }
+
+  async refreshMacPorts(): Promise<void> {
+    if (this.vm.status !== 'Running') return;
+    const result = await this.run('ports.sh', ['mac', 'list'], 30_000);
+    const ready = result.values.mac_ports_ready === '1' ? true : result.values.mac_ports_ready === '0' ? false : undefined;
+    this.state.macPorts = result.ok
+      ? { ports: result.macPorts, ready, at: this.now() }
+      : { ports: this.state.macPorts?.ports ?? [], ready, at: this.now(), error: result.reason ?? '读取失败' };
+    await this.probeMacPorts();
+    this.save();
+    this.changed();
+  }
+
+  /** Mac 上这些端口有没有服务在听（只看本机 127.0.0.1） */
+  private macListening = new Map<number, boolean>();
+  private async probeMacPorts(): Promise<void> {
+    const probe = this.host.forwardOptions?.portInUse ?? portInUse;
+    const next = new Map<number, boolean>();
+    for (const p of this.state.macPorts?.ports ?? []) next.set(p, await probe(p));
+    this.macListening = next;
+  }
+
+  async allowMacPort(port: number): Promise<boolean> {
+    return this.changeMacPort('allow', port);
+  }
+
+  async denyMacPort(port: number): Promise<boolean> {
+    return this.changeMacPort('deny', port);
+  }
+
+  private async changeMacPort(op: 'allow' | 'deny', port: number): Promise<boolean> {
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('端口要是 1–65535 之间的整数');
+    if (port === 17897) throw new Error('17897 是代理入口，只给 sing-box 用');
+    if (this.vm.status !== 'Running') throw new Error('VM 没有运行');
+    const result = await this.run('ports.sh', ['mac', op, String(port)]);
+    await this.refreshMacPorts();
+    if (!result.ok) throw new Error(result.reason ?? '没有改成');
+    return true;
+  }
+
+  addForward(vmPort: number, macPort?: number): Settings {
+    const mac = macPort ?? vmPort;
+    const problem = forwardProblem(vmPort, mac);
+    if (problem) throw new Error(problem);
+    const list = this.settings.forwards;
+    if (list.some((f) => f.vmPort === vmPort)) throw new Error(`VM 的 ${vmPort} 已经在转发`);
+    if (list.some((f) => f.macPort === mac)) throw new Error(`Mac 的 ${mac} 已经被另一条转发用了`);
+    if (list.length >= 32) throw new Error('最多 32 条转发');
+    const next = this.saveSettings({ ...this.settings, forwards: [...list, { vmPort, macPort: mac }] });
+    this.syncForwards();
+    return next;
+  }
+
+  removeForward(vmPort: number): Settings {
+    const next = this.saveSettings({ ...this.settings, forwards: this.settings.forwards.filter((f) => f.vmPort !== vmPort) });
+    this.syncForwards();
+    return next;
   }
 
   // ------------------------------------------------------------------ 传文件
@@ -813,6 +905,13 @@ export class Controller extends EventEmitter {
       core: this.builtin() ? this.coreStatus : undefined,
       captions: this.captions,
       shares: this.sharesState(),
+      ports: { items: this.state.ports?.items ?? [], at: this.state.ports?.at, error: this.state.ports?.error, forwards: this.forwards.list() },
+      macPorts: {
+        ports: (this.state.macPorts?.ports ?? []).map((port) => ({ port, listening: this.macListening.get(port) })),
+        ready: this.state.macPorts?.ready,
+        at: this.state.macPorts?.at,
+        error: this.state.macPorts?.error,
+      },
       vmPackages: vmPackagesState(this.state.vmPackages),
       settings: this.settings,
       paths: {

@@ -31,6 +31,7 @@ core/          不依赖 Electron 的逻辑
   env.ts         脚本环境：没有代理变量，PATH 取自登录 shell
   mihomo.ts      出口核心的配置与订阅解析
   egress.ts      出口核心：launchd 服务、节点固定、测延迟
+  forwards.ts    端口转发：每条一个 ssh -L 子进程，断了重连
   cli.ts         生成 ccvm 脚本与 Ghostty 的 AppleScript
 electron/      主进程与沙盒预加载
 src/           React 界面

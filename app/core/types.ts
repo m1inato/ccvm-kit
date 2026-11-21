@@ -57,6 +57,31 @@ export interface FileItem {
   mtime: number;
 }
 
+/** ports.sh list 列出的一个 VM 里正在监听的 TCP 端口 */
+export interface PortItem {
+  port: number;
+  address: string;
+  /** 进程名；不是 cc 的进程时为空 */
+  process: string;
+  /** 进程工作目录所在的 ~/work 项目；不在项目里时为空 */
+  project: string;
+}
+
+/** VM 能访问的一个 Mac 端口（VM 里经 192.168.5.2 / host.lima.internal） */
+export interface MacPort {
+  port: number;
+  /** Mac 上 127.0.0.1 这个端口有没有服务在听；没查到时为空 */
+  listening?: boolean;
+}
+
+/** 一条 Mac 127.0.0.1:macPort → VM 127.0.0.1:vmPort 的转发 */
+export interface Forward {
+  vmPort: number;
+  macPort: number;
+  state: 'starting' | 'open' | 'retrying';
+  error?: string;
+}
+
 export interface FileListing {
   /** VM 里解析后的真实路径 */
   path: string;
@@ -83,6 +108,8 @@ export type ScriptEvent =
   | ({ v: 1; type: 'item'; kind: 'claude_event' } & ClaudeEvent)
   | ({ v: 1; type: 'item'; kind: 'share' } & ShareItem)
   | ({ v: 1; type: 'item'; kind: 'file' } & FileItem)
+  | ({ v: 1; type: 'item'; kind: 'port' } & PortItem)
+  | { v: 1; type: 'item'; kind: 'mac_port'; port: number }
   | { v: 1; type: 'log'; level: 'info' | 'warn' | 'detail'; msg: string }
   | { v: 1; type: 'error'; msg: string }
   | { v: 1; type: 'end'; ok: boolean; code: number };
@@ -104,6 +131,8 @@ export interface RunResult {
   claudeEvents: ClaudeEvent[];
   shares: ShareItem[];
   files: FileItem[];
+  ports: PortItem[];
+  macPorts: number[];
   steps: { id: string; msg: string }[];
   errors: string[];
   logs: { level: string; msg: string }[];
@@ -227,6 +256,8 @@ export interface Settings {
   latencyTestUrl: string;
   /** 外观：跟随系统（默认）/ 深色 / 浅色 */
   theme: Theme;
+  /** 打开着的端口转发：App 启动、VM 启动后自动接上，断了自动重连。只能经 add/removeForward 改 */
+  forwards: { vmPort: number; macPort: number }[];
 }
 
 export interface VmPackages {
@@ -283,6 +314,10 @@ export interface Snapshot {
   core?: CoreStatus;
   captions: Caption[];
   shares: SharesState;
+  /** VM 里正在监听的端口（最近一次 ports.sh list）和打开着的转发 */
+  ports: { items: PortItem[]; at?: number; error?: string; forwards: Forward[] };
+  /** VM 能访问的 Mac 端口。ready 为 false 表示 VM 要先更新（级别 3） */
+  macPorts: { ports: MacPort[]; ready?: boolean; at?: number; error?: string };
   /** VM 的软件包：级别低于套件要求、或者没有 tmux 时提示补装（不算出错） */
   vmPackages: VmPackages;
   settings: Settings;
@@ -341,6 +376,15 @@ export interface Actions {
   makeDir(path: string): Promise<void>;
   /** 主进程先确认（/home/cc/mac 下额外警告）；取消时返回 false */
   removePath(path: string): Promise<boolean>;
+  refreshPorts(): Promise<void>;
+  addForward(vmPort: number, macPort?: number): Promise<Settings>;
+  removeForward(vmPort: number): Promise<Settings>;
+  refreshMacPorts(): Promise<void>;
+  /** 主进程先弹系统对话框确认，取消时返回 false */
+  allowMacPort(port: number): Promise<boolean>;
+  denyMacPort(port: number): Promise<boolean>;
+  /** 在浏览器里打开 http://localhost:<Mac端口>/，只限打开着的转发 */
+  openForward(macPort: number): Promise<void>;
   /** 每个路径一个后台任务；返回任务 id */
   pushPaths(paths: string[], destDir: string): Promise<string[]>;
   /** 主进程弹出选文件 / 文件夹的对话框，再上传；取消时返回空数组 */

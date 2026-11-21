@@ -17,6 +17,9 @@
 - 新图标；界面改为左侧导航加大标题的布局，浅色、深色主题。
 - 两种出网方式：CCVM 自带核心（Homebrew 的 mihomo，以 LaunchAgent 运行，只支持 Clash YAML 订阅）或 Clash Verge。自带核心用 Mac 当前的网络，订阅里节点的地址或密码变了自动换上。
 - 「网络」页：状态、检查、出网方式、订阅与节点、测延迟。
+- 「端口」页，两个方向：
+  - VM 访问 Mac：按端口允许 VM 经 `host.lima.internal` 连 Mac 本机的服务，立即生效，VM 重启后保留。
+  - Mac 访问 VM：列出 VM 里正在监听的端口，一键转发到 Mac 的 `localhost`，在浏览器里打开；转发会记住，断了自动重连。
 - 内嵌终端：会话跑在 VM 里 cc 的 tmux 中，关窗口只是断开；会话列表显示每个会话在跑什么、最后活动时间，可以改名。
 - 外部终端：Terminal、iTerm、Ghostty；命令行入口 `ccvm`，在任意终端里 `ccvm`、`ccvm <项目>`、`ccvm -a <会话>`。
 - 菜单栏状态点与桌面胶囊；代理断开时系统通知一次。
@@ -28,9 +31,9 @@
 ### 脚本
 
 - 宿主脚本支持 `--json`，输出带稳定 id 的事件，格式见 `docs/events.md`。
-- 新增 `vm.sh`、`preflight.sh`、`workspace.sh`、`hooks.sh`、`share.sh`、`files.sh`、`upgrade.sh`。
+- 新增 `vm.sh`、`preflight.sh`、`workspace.sh`、`hooks.sh`、`share.sh`、`files.sh`、`ports.sh`、`upgrade.sh`。
 - `enter.sh`：`--project`、`--session`（含 `auto`）、`--attach`；VM 没运行时先启动。
-- `upgrade.sh` 按级别更新已部署的 VM，`setup.sh` 每次也会运行它：补装 `git`、`tmux`；加 TUN 看门狗，系统更新重启网络服务后不再断网。
+- `upgrade.sh` 按级别更新已部署的 VM，`setup.sh` 每次也会运行它：补装 `git`、`tmux`；加 TUN 看门狗，系统更新重启网络服务后不再断网；防火墙加上 VM 访问 Mac 端口用的集合。
 - 不再生成校验文件，规则见 `AGENTS.md`。
 
 ## 2.2.0 — 2026-11-04

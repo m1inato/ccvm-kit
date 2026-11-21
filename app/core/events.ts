@@ -1,7 +1,7 @@
 // 解析脚本的 NDJSON 事件，并按 docs/events.md 给出结论。
 // 原则：不确定就当失败。读不懂的行、缺少 end、退出码非 0、任何失败项，都不是「通过」。
 import { StringDecoder } from 'node:string_decoder';
-import type { CheckEvent, ClaudeEvent, FileItem, ProjectItem, RunResult, ScriptEvent, SessionItem, ShareItem } from './types';
+import type { CheckEvent, ClaudeEvent, FileItem, PortItem, ProjectItem, RunResult, ScriptEvent, SessionItem, ShareItem } from './types';
 
 const ID = /^[a-z0-9_.]+$/;
 const isStr = (v: unknown): v is string => typeof v === 'string';
@@ -58,6 +58,14 @@ export function parseEventLine(line: string): ScriptEvent | null {
         if (!isStr(e.name) || !e.name || e.name.includes('/')) return null;
         const t = e.file_type === 'file' || e.file_type === 'dir' || e.file_type === 'link' ? e.file_type : 'other';
         return { v: 1, type: 'item', kind: 'file', name: e.name, file_type: t, size: isNum(e.size) ? e.size : 0, mtime: isNum(e.mtime) ? e.mtime : 0 };
+      }
+      if (e.kind === 'mac_port') {
+        if (!isNum(e.port) || !Number.isInteger(e.port) || e.port < 1 || e.port > 65535) return null;
+        return { v: 1, type: 'item', kind: 'mac_port', port: e.port };
+      }
+      if (e.kind === 'port') {
+        if (!isNum(e.port) || !Number.isInteger(e.port) || e.port < 1 || e.port > 65535) return null;
+        return { v: 1, type: 'item', kind: 'port', port: e.port, address: isStr(e.address) ? e.address : '', process: isStr(e.process) ? e.process : '', project: isStr(e.project) ? e.project : '' };
       }
       if (e.kind !== 'project' || !isStr(e.name)) return null;
       const item: ProjectItem = {
@@ -148,6 +156,8 @@ export function summarize(
   const claudeEvents: ClaudeEvent[] = [];
   const shares: ShareItem[] = [];
   const files: FileItem[] = [];
+  const ports: PortItem[] = [];
+  const macPorts: number[] = [];
   const steps: { id: string; msg: string }[] = [];
   const errors: string[] = [];
   const logs: { level: string; msg: string }[] = [];
@@ -177,6 +187,11 @@ export function summarize(
         } else if (e.kind === 'file') {
           const { v: _v, type: _t, kind: _k, ...f } = e;
           files.push(f);
+        } else if (e.kind === 'mac_port') {
+          macPorts.push(e.port);
+        } else if (e.kind === 'port') {
+          const { v: _v, type: _t, kind: _k, ...pt } = e;
+          ports.push(pt);
         } else {
           const { v: _v, type: _t, kind: _k, ...item } = e;
           items.push(item);
@@ -229,6 +244,8 @@ export function summarize(
     claudeEvents,
     shares,
     files,
+    ports,
+    macPorts,
     steps,
     errors,
     logs,

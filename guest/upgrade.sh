@@ -2,7 +2,7 @@
 # VM 内以 root 运行（Mac 端经 stdin 传入：limactl shell ccvm sudo bash -s -- <目标级别>）。
 # 补装软件包（升级步骤）：早先部署的 VM 里可能缺后来才加进 install.sh 的包。
 # 读 /var/lib/ccvm/level（不存在或读不懂当作 0），按顺序执行比它高的步骤，每完成一步写入新级别。
-# 不改防火墙规则、sing-box 配置和 DNS；第 2 步只加 networkd 的设置和一个 TUN 看门狗。root 的流量同样走 TUN，apt 可以正常下载。
+# 不改 sing-box 配置和 DNS。第 2 步加 networkd 的设置和一个 TUN 看门狗；第 3 步给防火墙加 VM → Mac 端口的集合。root 的流量同样走 TUN，apt 可以正常下载。
 # 输出：PASS|FAIL vm.upgrade <说明>，以及 VALUE vm_level <级别>。
 set -uo pipefail
 LEVEL_FILE="${CCVM_LEVEL_FILE:-/var/lib/ccvm/level}"
@@ -79,6 +79,46 @@ WantedBy=timers.target
 TMEOF
   systemctl daemon-reload || return 1
   systemctl enable --now ccvm-tun-watchdog.timer >&2
+}
+
+# VM → Mac 的端口：防火墙里加一个集合 mac_ports，放行到 192.168.5.2（= Mac 的 127.0.0.1）上这些端口的连接。
+# 允许哪些端口记在 /etc/ccvm/mac-ports（一行一个，root 所有）；mac-ports-load 把它装进集合，开机时在防火墙之后运行。
+# 17897 是代理入口，只给 sing-box 用，永远不进这个集合。
+step_3() {
+  local R="${CCVM_ROOT:-}" f
+  f="$R/etc/ccvm/firewall.nft"
+  install -d -m 0755 "$R/usr/local/lib/ccvm" "$R/etc/systemd/system/ccvm-firewall.service.d" || return 1
+  [ -e "$R/etc/ccvm/mac-ports" ] || { : > "$R/etc/ccvm/mac-ports" && chmod 0644 "$R/etc/ccvm/mac-ports"; } || return 1
+  cat > "$R/usr/local/lib/ccvm/mac-ports-load" <<'LDEOF' || return 1
+#!/bin/sh
+# 由 CCVM 安装：把 /etc/ccvm/mac-ports 里允许的 Mac 端口装进防火墙集合 mac_ports（整体替换，一次完成）。
+list="${CCVM_ROOT:-}/etc/ccvm/mac-ports"
+ports=$(grep -xE '[1-9][0-9]{0,4}' "$list" 2>/dev/null | awk '$1 <= 65535 && $1 != 17897' | sort -nu | paste -sd, -)
+{
+  echo "flush set inet ccvm mac_ports"
+  [ -z "$ports" ] || echo "add element inet ccvm mac_ports { $ports }"
+} | nft -f -
+LDEOF
+  chmod 0755 "$R/usr/local/lib/ccvm/mac-ports-load" || return 1
+  printf '[Service]\n# 由 CCVM 安装：防火墙加载后装入允许的 Mac 端口（锁定模式下没有这个集合，失败也不影响）\nExecStartPost=-/usr/local/lib/ccvm/mac-ports-load\n' \
+    > "$R/etc/systemd/system/ccvm-firewall.service.d/mac-ports.conf" || return 1
+  if ! grep -q 'set mac_ports' "$f"; then
+    awk '
+      /^table inet ccvm \{/ { print; print "  set mac_ports { type inet_service; }"; next }
+      /dport 17897 accept/  { print; print "    ip daddr 192.168.5.2 tcp dport @mac_ports accept comment \"VM → Mac 上允许的端口\""; next }
+      { print }' "$f" > "$f.new" || return 1
+    if ! grep -q 'set mac_ports' "$f.new" || ! grep -q '@mac_ports' "$f.new" || ! nft -c -f "$f.new" >&2; then
+      rm -f "$f.new"; return 1
+    fi
+    chmod 0644 "$f.new" && mv -f "$f.new" "$f" || return 1
+    # 原子替换整张表，立即生效；不重启 ccvm-firewall（那会连带重启网络服务和 TUN）
+    nft -f "$f" >&2 || return 1
+  fi
+  "$R/usr/local/lib/ccvm/mac-ports-load" >&2 || return 1
+  # VM 里用 host.lima.internal 指 Mac
+  grep -qE '^[^#]*[[:space:]]host\.lima\.internal([[:space:]]|$)' "$R/etc/hosts" 2>/dev/null \
+    || printf '192.168.5.2 host.lima.internal\n' >> "$R/etc/hosts" || return 1
+  [ -n "$R" ] || systemctl daemon-reload || return 1
 }
 # ----------------------------------------------------------------
 

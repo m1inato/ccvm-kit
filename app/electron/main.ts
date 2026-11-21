@@ -498,6 +498,35 @@ async function dispatch(name: string, args: unknown[]): Promise<unknown> {
     case 'applyShares':
       if (!(await confirmApplyShares())) return null;
       return controller.applyShares();
+    case 'refreshMacPorts':
+      return controller.refreshMacPorts();
+    case 'allowMacPort': {
+      const port = Number(args[0]);
+      const proxyish = [1080, 7890, 7891, 7897, 7898, 9090, 9097].includes(port);
+      const detail = [
+        `VM 里的程序（包括 Claude）可以经 host.lima.internal:${port} 连 Mac 上 127.0.0.1:${port} 的服务。立即生效，VM 重启后保留。`,
+        proxyish ? `\n${port} 常见于 Clash 的代理端口或控制器：放行后，VM 可以借它不走你选定的节点出网，或者改 Clash 的设置。` : '',
+      ].join('');
+      if (!(await confirm(`允许 VM 访问 Mac 的 ${port}？`, detail, '允许', proxyish ? 'warning' : 'question'))) return false;
+      return controller.allowMacPort(port);
+    }
+    case 'denyMacPort':
+      return controller.denyMacPort(Number(args[0]));
+    case 'refreshPorts':
+      return controller.refreshPorts();
+    case 'addForward': {
+      const vm = Number(args[0]);
+      const mac = args[1] === undefined || args[1] === null || args[1] === '' ? undefined : Number(args[1]);
+      return controller.addForward(vm, mac);
+    }
+    case 'removeForward':
+      return controller.removeForward(Number(args[0]));
+    case 'openForward': {
+      const mac = Number(args[0]);
+      if (!controller.settings.forwards.some((f) => f.macPort === mac)) throw new Error('没有这条转发');
+      await shell.openExternal(`http://localhost:${mac}/`);
+      return;
+    }
     case 'listFiles':
       return controller.listFiles(str(args[0], 'path'));
     case 'makeDir':
@@ -610,6 +639,7 @@ function watchNetwork(): void {
 app.on('second-instance', () => openMain());
 app.on('before-quit', () => {
   quitting = true;
+  controller?.dispose(); // 结束端口转发
   terminals?.closeAll(); // 只断开本机这一端，VM 里的 tmux 会话继续
 });
 app.on('window-all-closed', () => {

@@ -290,6 +290,7 @@ select.input { padding-right: 8px; }
 .banner { display: flex; align-items: center; gap: 14px; padding: 14px 18px; margin-bottom: 18px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--card); }
 .banner.error { border-color: var(--err-border); background: var(--err-soft); }
 .banner .title { font-weight: 600; }
+.page > .banner { margin-bottom: 0; }
 .banner.error .title { color: var(--err); }
 .banner .msg { flex: 1; min-width: 0; color: var(--text-2); font-size: 13.5px; }
 
@@ -427,6 +428,10 @@ select.input { padding-right: 8px; }
 }
 .caption.error { border-color: var(--err-border); }
 @keyframes rise { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+
+/* ---------------------------------------------------------------- 端口 */
+.port-num { font-family: var(--mono); font-size: 17px; font-weight: 600; min-width: 58px; color: var(--text); }
+.hero .port-mac { width: 210px; height: 44px; border-radius: 10px; font-size: 15px; }
 
 /* ---------------------------------------------------------------- 文件 */
 .crumbs { display: flex; flex-wrap: wrap; gap: 2px; font-family: var(--mono); font-size: 13px; color: var(--muted); }

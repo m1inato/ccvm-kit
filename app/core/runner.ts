@@ -26,6 +26,7 @@ export const SCRIPTS = new Set([
   'workspace.sh',
   'share.sh',
   'files.sh',
+  'ports.sh',
   'upgrade.sh',
 ]);
 

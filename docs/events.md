@@ -28,7 +28,7 @@ bash scripts/check.sh --json
 | `step` | `id`、`msg` | 多步骤任务进入下一步（如 `setup.vm`） |
 | `check` | `id`、`ok`、`msg` | 一项检查的结论。`id` 稳定，`msg` 是给人看的原话 |
 | `value` | `key`、`value` | 测得的值，例如出口 IP；值总是字符串 |
-| `item` | `kind` 及其字段 | 列表项：`project`、`session`、`claude_event`、`share`、`file`（见文末） |
+| `item` | `kind` 及其字段 | 列表项：`project`、`session`、`claude_event`、`share`、`file`、`port`、`mac_port`（见文末） |
 | `log` | `level`（`info` / `warn` / `detail`）、`msg` | 过程信息 |
 | `error` | `msg` | 脚本因错误终止前的最后一句话 |
 | `end` | `ok`、`code` | 最后一条事件 |
@@ -42,12 +42,15 @@ bash scripts/check.sh --json
 | `check.sh [--json]` | 状态检查：Mac 上的代理入口通不通，VM 里防火墙、TUN 在不在、能不能经代理出网 |
 | `setup.sh [--json]` | 一键部署，步骤为 `setup.proxy` → `setup.vm` → `setup.install` → `setup.verify` |
 | `preflight.sh [--json]` | 部署前检查，不需要 VM，逐项报告 |
-| `upgrade.sh [--json]` | 更新已部署的 VM（`setup.sh` 看到已安装就跳过网络层安装，早先部署的 VM 会缺后来加的东西）。按级别逐步补上：1 = `git`、`tmux`；2 = networkd 保留 TUN 的策略路由（`ManageForeignRoutingPolicyRules=no`）+ TUN 看门狗（每 30 秒检查，路由丢了就重启 TUN）。不改防火墙规则、sing-box 配置和 DNS；`setup.sh` 每次也会跑一遍；步骤为 `upgrade.packages` → `upgrade.verify`，后者跑状态检查，事件并入同一个流 |
+| `upgrade.sh [--json]` | 更新已部署的 VM（`setup.sh` 看到已安装就跳过网络层安装，早先部署的 VM 会缺后来加的东西）。按级别逐步补上：1 = `git`、`tmux`；2 = networkd 保留 TUN 的策略路由（`ManageForeignRoutingPolicyRules=no`）+ TUN 看门狗（每 30 秒检查，路由丢了就重启 TUN）；3 = 防火墙加 `mac_ports` 集合（VM 访问 Mac 端口），`/etc/hosts` 加 `host.lima.internal`。不改 sing-box 配置和 DNS；`setup.sh` 每次也会跑一遍；步骤为 `upgrade.packages` → `upgrade.verify`，后者跑状态检查，事件并入同一个流 |
 | `vm.sh start\|stop\|status [--json]` | 启停 VM |
 | `workspace.sh list\|claude\|clone URL\|kill-session 会话名\|rename-session 旧名 新名 [--json]` | VM 里 `~/work` 的项目与 tmux 会话、Claude Code 是否已安装、以 cc 身份克隆、结束会话、给会话改名 |
 | `hooks.sh enable\|disable\|status [--json]` | 「Claude 做完了」字幕用的 hook：装在 VM 里 root 所有的 managed-settings 目录里，cc 改不了 |
 | `enter.sh [--project 名称] [--session 会话名\|auto] \| --attach 会话名` | 交互入口（没有 JSON 模式）。VM 没运行时先启动。`--session` 新建或接入 tmux 会话，`auto` 按 `<项目>-<第一个空闲序号>` 取名；`--attach` 只接入已有会话 |
 | `share.sh status\|apply [--json]` | 共享文件夹（读写）。`status` 列出 `$STATE/shares.txt` 里的共享并逐个检查路径；VM 在运行时再到 VM 里只读核对 cc 看到的 `/home/cc/mac/<名字>` 挂没挂上；`apply` 检查路径 → 停 VM → `limactl edit --set '.mounts = [...]'` → 启动 → 在 VM 里设置 bindfs 映射。步骤为 `share.check` → `share.stop` → `share.edit` → `share.start` → `share.guest` |
+| `ports.sh list [--json]` | VM 里正在监听的 TCP 端口（以 cc 身份运行 `ss`；SSH 的 22 不列出） |
+| `ports.sh mac list\|allow <端口>\|deny <端口> [--json]` | VM 能访问的 Mac 端口：VM 防火墙放行到 `192.168.5.2`（Mac 的 `127.0.0.1`）上这些端口的连接，VM 里用 `host.lima.internal:<端口>`。立即生效，记在 VM 的 `/etc/ccvm/mac-ports`，重启后保留。17897 不能加。需要 VM 级别 3 |
+| `ports.sh forward <VM端口> [Mac端口]` | 把 VM 的 `127.0.0.1:<VM端口>` 转发到 Mac 的 `127.0.0.1:<Mac端口>`（默认相同）。前台运行，Ctrl-C 结束。走 Lima 的 SSH 配置（`$LIMA_HOME/<实例>/ssh.config`），用自己的连接（`ControlMaster=no`），本地端口占用时直接失败 |
 | `files.sh list\|mkdir\|rm <VM路径> [--json]` | 浏览 VM 里 cc 的家目录；只能碰 `/home/cc` 下面，不能删 `/home/cc`、`/home/cc/mac`、`/home/cc/mac/<名字>` |
 | `files.sh push <Mac源路径> <VM目标目录> [--json]` | 上传普通文件或文件夹（顶层不能是符号链接），`tar` 管道以 cc 身份解包 |
 | `files.sh pull <VM文件> <Mac目标文件> [--force] [--json]` | 只下载单个普通文件，不跟符号链接、不支持目录；Mac 上目标已存在时要 `--force` |
@@ -96,6 +99,16 @@ id 是 App 与脚本之间的接口。可以改说明文字，改 id 要同时�
 | `share.lima_mounts` | `limactl edit` 已把挂载列表写进 Lima 实例配置 |
 | `share.guest` | VM 里 `/home/cc/mac/<名字>` 都已经用 bindfs 挂上（`apply` / `verify`），或者映射已移除（`remove`） |
 
+### 端口（`scripts/ports.sh`、`guest/ports.sh`）
+
+| id | 含义 |
+|---|---|
+| `ports.list` | 列出了 VM 里正在监听的端口 |
+| `ports.forward` | 端口号是 1–65535 的整数，Lima 的 SSH 配置存在 |
+| `macports.list` | 列出了 VM 能访问的 Mac 端口 |
+| `macports.allow` | 端口号合法、不是 17897，VM 已有这项功能（级别 3）；已写入列表并装进防火墙 |
+| `macports.deny` | 同上；已从列表和防火墙里去掉 |
+
 ### 传文件（`scripts/files.sh`、`guest/files.sh`，以 cc 身份运行）
 
 | id | 含义 |
@@ -131,6 +144,9 @@ id 是 App 与脚本之间的接口。可以改说明文字，改 id 要同时�
 | `vm_level` / `vm_level_target` | VM 里的软件包级别（`/var/lib/ccvm/level`，读不到当作 0）/ 套件要求的级别（`scripts/lib.sh` 的 `VM_LEVEL`）。`workspace.sh list` 和 `upgrade.sh` 都会给出 |
 | `tmux_installed` | VM 里有没有 tmux（`1` / `0`），`workspace.sh list` 给出；没有时 App 提示补装，内嵌终端不开新会话 |
 | `share_count` | `shares.txt` 里的共享文件夹数 |
+| `port_count` | `ports.sh list` 列出的端口数 |
+| `mac_ports_ready` | VM 有没有「VM 访问 Mac 端口」这项功能（`1` / `0`）；`0` 时先更新 VM |
+| `mac_port_count` | `ports.sh mac list` 列出的端口数 |
 | `path` | `files.sh list` 列出的文件夹的真实路径 |
 | `truncated` | `files.sh list` 条目太多时只列出的条数 |
 
@@ -179,3 +195,17 @@ id 是 App 与脚本之间的接口。可以改说明文字，改 id 要同时�
 ```
 
 `file_type` 是 `file`、`dir`、`link`、`other` 之一（不叫 `type`：每条事件的 `type` 已经是 `item`）；名字里的 `\x1f`、`\r`、`\n` 已去掉。
+
+## 端口列表项
+
+`ports.sh list --json` 为每个端口输出一条（`process`、`project` 只对 cc 自己的进程读得到，别的为空）：
+
+```json
+{"v":1,"type":"item","kind":"port","port":3000,"address":"0.0.0.0","process":"node","project":"my-api"}
+```
+
+`ports.sh mac list --json` 为每个允许的 Mac 端口输出一条：
+
+```json
+{"v":1,"type":"item","kind":"mac_port","port":5432}
+```

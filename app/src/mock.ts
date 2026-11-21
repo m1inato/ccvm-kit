@@ -92,10 +92,23 @@ function initial(scenario: string): Snapshot {
       vmName: 'ccvm', limaHome: '~/.lima-ccvm', stateDir: '~/Library/Application Support/CCVM/state', checkIntervalMin: 3,
       showCapsule: true, terminalApp: 'Terminal', launchAtLogin: true, egressMode: 'builtin', nodeName: '示例节点 · 东京 01',
       claudeLoginConfirmed: true, welcomeDone: true, hooksEnabled: true, sharedFolders: [], sharesEnabled: false,
-      latencyTestUrl: 'https://www.gstatic.com/generate_204', theme: 'system',
+      latencyTestUrl: 'https://www.gstatic.com/generate_204', theme: 'system', forwards: [{ vmPort: 3000, macPort: 3000 }, { vmPort: 8080, macPort: 18080 }],
     },
     shares: { applied: [], pendingApply: false, needsRetry: false, problems: {} },
-    vmPackages: { level: 2, target: 2, tmuxInstalled: true, needsUpgrade: false },
+    ports: {
+      items: [
+        { port: 3000, address: '0.0.0.0', process: 'node', project: 'my-api' },
+        { port: 5173, address: '127.0.0.1', process: 'vite', project: 'web-app' },
+        { port: 6006, address: '0.0.0.0', process: 'python3', project: '' },
+      ],
+      at: now - 4000,
+      forwards: [
+        { vmPort: 3000, macPort: 3000, state: 'open' },
+        { vmPort: 8080, macPort: 18080, state: 'open' },
+      ],
+    },
+    macPorts: { ports: [{ port: 5432, listening: true }, { port: 6379, listening: false }], ready: true, at: now - 6000 },
+    vmPackages: { level: 3, target: 3, tmuxInstalled: true, needsUpgrade: false },
     paths: { kit: '/Applications/CCVM.app/Contents/Resources/kit', state: '~/Library/Application Support/CCVM/state', jobs: 'jobs' },
     kitVersion: '2.3.0', appVersion: '0.1.0',
   };
@@ -128,7 +141,8 @@ function initial(scenario: string): Snapshot {
     };
   }
   if (scenario === 'upgrade') {
-    snap.vmPackages = { level: 1, target: 2, tmuxInstalled: true, needsUpgrade: true };
+    snap.vmPackages = { level: 2, target: 3, tmuxInstalled: true, needsUpgrade: true };
+    snap.macPorts = { ports: [], ready: false };
   }
   if (scenario === 'busy') {
     snap.jobs = [{ id: 'demo-start', kind: 'vm-start', title: '启动 VM', args: ['start', '--json'], state: 'running', startedAt: now - 12_000 }, cloneJob];
@@ -334,6 +348,32 @@ export function createMockBridge(): Bridge {
         update({ shares: { applied, pendingApply: false, needsRetry: false, problems: {} } });
         caption('共享文件夹已应用，VM 已重启');
       }),
+    refreshMacPorts: async () => update({ macPorts: { ...snap.macPorts, at: Date.now() } }),
+    allowMacPort: async (port: number) => {
+      if (!window.confirm(`允许 VM 访问 Mac 的 ${port}？`)) return false;
+      if (port === 17897) throw new Error('17897 是代理入口，只给 sing-box 用');
+      const ports = [...snap.macPorts.ports.filter((p) => p.port !== port), { port, listening: false }].sort((a, b) => a.port - b.port);
+      update({ macPorts: { ...snap.macPorts, ports } });
+      return true;
+    },
+    denyMacPort: async (port: number) => {
+      update({ macPorts: { ...snap.macPorts, ports: snap.macPorts.ports.filter((p) => p.port !== port) } });
+      return true;
+    },
+    refreshPorts: async () => update({ ports: { ...snap.ports, at: Date.now() } }),
+    addForward: async (vmPort: number, macPort?: number) => {
+      const mac = macPort ?? vmPort;
+      if (snap.settings.forwards.some((f) => f.vmPort === vmPort)) throw new Error(`VM 的 ${vmPort} 已经在转发`);
+      const forwards = [...snap.settings.forwards, { vmPort, macPort: mac }];
+      update({ settings: { ...snap.settings, forwards }, ports: { ...snap.ports, forwards: [...snap.ports.forwards, { vmPort, macPort: mac, state: 'starting' }] } });
+      setTimeout(() => update({ ports: { ...snap.ports, forwards: snap.ports.forwards.map((f) => (f.vmPort === vmPort ? { ...f, state: 'open' } : f)) } }), 900);
+      return snap.settings;
+    },
+    removeForward: async (vmPort: number) => {
+      update({ settings: { ...snap.settings, forwards: snap.settings.forwards.filter((f) => f.vmPort !== vmPort) }, ports: { ...snap.ports, forwards: snap.ports.forwards.filter((f) => f.vmPort !== vmPort) } });
+      return snap.settings;
+    },
+    openForward: async (macPort: number) => window.open(`http://localhost:${macPort}/`, '_blank', 'noopener'),
     listFiles: async (p: string) => {
       await sleep(200);
       const entries = tree.get(p);

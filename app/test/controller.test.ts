@@ -380,9 +380,9 @@ describe('Controller: VM package upgrade', () => {
     f.set('workspace.out', 'VALUE tmux_installed 0\nVALUE vm_level 0\n');
     await c.refreshProjects();
     let snap = c.snapshot();
-    expect(snap.vmPackages).toEqual({ level: 0, target: 2, tmuxInstalled: false, needsUpgrade: true });
+    expect(snap.vmPackages).toEqual({ level: 0, target: 3, tmuxInstalled: false, needsUpgrade: true });
     expect(snap.issues.some((i) => /软件包|tmux/.test(i.title))).toBe(false); // 不算出错
-    f.set('workspace.out', 'VALUE tmux_installed 1\nVALUE vm_level 2\n');
+    f.set('workspace.out', 'VALUE tmux_installed 1\nVALUE vm_level 3\n');
     await c.refreshProjects();
     snap = c.snapshot();
     expect(snap.vmPackages.needsUpgrade).toBe(false);

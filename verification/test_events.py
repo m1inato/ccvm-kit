@@ -50,6 +50,8 @@ case "$1" in
     esac
     body="$(cat)"
     case "$body" in
+      *"list_ports"*) out="${STUB_PORTS_OUT-}"; rc="${STUB_PORTS_RC:-0}" ;;
+      *"macports.sh list"*) out="${STUB_MACPORTS_OUT-}"; rc="${STUB_MACPORTS_RC:-0}" ;;
       *"VM 内以 cc 身份运行"*) out="$STUB_WORKSPACE_OUT"; rc="${STUB_WORKSPACE_RC:-0}" ;;
       *"ccvm-shares.service"*) out="${STUB_SHARES_OUT-}"; rc="${STUB_SHARES_RC:-0}" ;;
       *"补装软件包（升级步骤）"*) out="${STUB_UPGRADE_OUT-}"; rc="${STUB_UPGRADE_RC:-0}" ;;
@@ -413,6 +415,71 @@ printf 'ip=203.0.113.7\\n'
                 result = self.run_script("enter.sh", *args)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn("shell", self.log.read_text() if self.log.exists() else "")
+
+    # ------------------------------------------------------------------ ports.sh
+    def test_ports_list_becomes_items(self):
+        out = self.write("ports", "".join(US.join(r) + "\n" for r in [
+            ["PORT", "3000", "0.0.0.0", "node", "my-api"],
+            ["PORT", "5173", "127.0.0.1", "vite", ""],
+            ["PORT", "99999", "0.0.0.0", "bad", ""],
+            ["PORT", "8080", "0.0.0.0", "evil name;x", "../x"],
+        ]) + "PASS ports.list ok\n")
+        result = self.run_script("ports.sh", "list", "--json", STUB_PORTS_OUT=str(out))
+        events = self.events(result)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        items = [e for e in events if e["type"] == "item" and e["kind"] == "port"]
+        self.assertEqual([(i["port"], i["process"], i["project"]) for i in items],
+                         [(3000, "node", "my-api"), (5173, "vite", ""), (8080, "", "")])
+        self.assertEqual(self.values(events)["port_count"], "3")
+        self.assertIn("sudo -u cc", self.log.read_text())
+
+    def test_ports_forward_uses_its_own_ssh_connection_on_loopback(self):
+        (self.root / "lima/ccvm").mkdir(parents=True)
+        (self.root / "lima/ccvm/ssh.config").write_text("Host lima-ccvm\n")
+        self.stub("ssh", 'printf "%s\\n" "$*" >> "$STUB_LOG"')
+        result = self.run_script("ports.sh", "forward", "3000", "13000")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        call = self.log.read_text().splitlines()[-1]
+        self.assertIn("-L 127.0.0.1:13000:127.0.0.1:3000 lima-ccvm", call)
+        self.assertIn("-o ControlMaster=no -o ControlPath=none -o ExitOnForwardFailure=yes", call)
+        self.assertIn("-F %s/lima/ccvm/ssh.config" % self.root, call)
+
+    def test_ports_forward_rejects_bad_ports_before_reaching_the_vm(self):
+        for args in [["0"], ["70000"], ["3000", "x"], ["3000;id"], ["-1"]]:
+            with self.subTest(args=args):
+                if self.log.exists():
+                    self.log.unlink()
+                result = self.run_script("ports.sh", "forward", *args, "--json")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("list", self.log.read_text() if self.log.exists() else "")
+
+    def test_mac_ports_list_becomes_items(self):
+        out = self.write("mp", "VALUE mac_ports_ready 1\nMACPORT 5432\nMACPORT 99999\nMACPORT 6379\nPASS macports.list ok\n")
+        result = self.run_script("ports.sh", "mac", "list", "--json", STUB_MACPORTS_OUT=str(out))
+        events = self.events(result)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([e["port"] for e in events if e["type"] == "item" and e["kind"] == "mac_port"], [5432, 6379])
+        values = self.values(events)
+        self.assertEqual(values["mac_ports_ready"], "1")
+        self.assertEqual(values["mac_port_count"], "2")
+        self.assertIn("sudo bash -s -- list", self.log.read_text())
+
+    def test_mac_ports_allow_validates_before_reaching_the_vm(self):
+        for port in ["17897", "0", "70000", "1;id", "abc"]:
+            with self.subTest(port=port):
+                if self.log.exists():
+                    self.log.unlink()
+                events = self.events(self.run_script("ports.sh", "mac", "allow", port, "--json"))
+                self.assertIs(self.checks(events)["macports.allow"], False)
+                self.assertNotIn("bash -s", self.log.read_text() if self.log.exists() else "")
+        out = self.write("ok", "PASS macports.allow VM 现在可以访问 Mac 的 5432\n")
+        result = self.run_script("ports.sh", "mac", "allow", "5432", "--json", STUB_SELFCHECK_OUT=str(out))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("sudo bash -s -- allow 5432", self.log.read_text())
+
+    def test_ports_forward_needs_the_lima_ssh_config(self):
+        events = self.events(self.run_script("ports.sh", "forward", "3000", "--json"))
+        self.assertIs(self.checks(events)["ports.forward"], False)
 
     # ------------------------------------------------------------------ setup.sh
     def test_setup_json_reports_steps_and_failure_code(self):

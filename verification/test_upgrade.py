@@ -115,6 +115,101 @@ class TunRouteFixTests(ScriptHarness):
         self.assertIn("systemctl daemon-reload", calls)
         self.assertIn("systemctl enable --now ccvm-tun-watchdog.timer", calls)
 
+    # ------------------------------------------------------------------ 第 3 步：VM → Mac 端口
+    def old_firewall(self, root):
+        """2.2.0 时装进 VM 的防火墙：没有 mac_ports"""
+        text = (KIT / "config/firewall.nft.in").read_text().replace("@SBUID@", "990")
+        text = re.sub(r"\n  set mac_ports \{[^}]*\}\n", "\n", text)
+        text = re.sub(r"\n    ip daddr 192.168.5.2 tcp dport @mac_ports accept[^\n]*", "", text)
+        text = text.replace("mac_ports", "")   # 头部注释也去掉，保证判断不靠注释
+        (root / "etc/ccvm").mkdir(parents=True, exist_ok=True)
+        (root / "etc/ccvm/firewall.nft").write_text(text)
+        (root / "etc/hosts").write_text("127.0.0.1 localhost\n")
+
+    def nft_stub(self, check_rc=0):
+        # -c -f 是检查；-f - 从 stdin 读（记下内容）；其余只记命令
+        self.stub("nft", 'printf "nft %s\\n" "$*" >> "$STUB_LOG"\n'
+                  f'[ "$1" = -c ] && exit {check_rc}\n'
+                  '[ "$1 $2" = "-f -" ] && sed "s/^/  /" >> "$STUB_LOG"\n'
+                  'exit 0')
+        self.stub("systemctl", 'printf "systemctl %s\\n" "$*" >> "$STUB_LOG"')
+
+    def step_3(self, root):
+        return subprocess.run([BASH_EXEC, "-c", 'CCVM_UPGRADE_LIB=1 . "$0"; step_3', str(KIT / "guest/upgrade.sh")],
+                              env=self.env | {"CCVM_ROOT": str(root)}, text=True, capture_output=True, timeout=30)
+
+    def test_step_3_adds_the_mac_ports_set_to_an_old_firewall(self):
+        root = self.root / "vmroot"
+        self.old_firewall(root)
+        self.nft_stub()
+        result = self.step_3(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        fw = (root / "etc/ccvm/firewall.nft").read_text()
+        self.assertIn("  set mac_ports { type inet_service; }", fw)
+        lines = fw.splitlines()
+        i = next(n for n, l in enumerate(lines) if "dport 17897 accept" in l)
+        self.assertIn("ip daddr 192.168.5.2 tcp dport @mac_ports accept", lines[i + 1])
+        self.assertIn("meta skuid 990", lines[i])          # 17897 仍然只给 sing-box
+        calls = self.log.read_text()
+        self.assertLess(calls.index("nft -c -f"), calls.index("nft -f %s" % (root / "etc/ccvm/firewall.nft")))
+        self.assertNotIn("restart", calls)                 # 不重启防火墙服务（会连带重启网络和 TUN）
+        self.assertIn("ExecStartPost=-/usr/local/lib/ccvm/mac-ports-load",
+                      (root / "etc/systemd/system/ccvm-firewall.service.d/mac-ports.conf").read_text())
+        self.assertIn("192.168.5.2 host.lima.internal", (root / "etc/hosts").read_text())
+        # 再跑一遍：什么都不重复
+        self.assertEqual(self.step_3(root).returncode, 0)
+        self.assertEqual((root / "etc/ccvm/firewall.nft").read_text().count("set mac_ports"), 1)
+        self.assertEqual((root / "etc/hosts").read_text().count("host.lima.internal"), 1)
+
+    def test_step_3_leaves_the_firewall_alone_when_the_new_rules_do_not_check(self):
+        root = self.root / "vmroot"
+        self.old_firewall(root)
+        before = (root / "etc/ccvm/firewall.nft").read_text()
+        self.nft_stub(check_rc=1)
+        self.assertNotEqual(self.step_3(root).returncode, 0)
+        self.assertEqual((root / "etc/ccvm/firewall.nft").read_text(), before)
+        self.assertFalse((root / "etc/ccvm/firewall.nft.new").exists())
+        self.assertNotIn("nft -f %s" % (root / "etc/ccvm/firewall.nft"), self.log.read_text())
+
+    def test_mac_ports_allow_deny_and_load_never_include_17897(self):
+        root = self.root / "vmroot"
+        self.old_firewall(root)
+        self.nft_stub()
+        self.assertEqual(self.step_3(root).returncode, 0)
+
+        def mp(*args):
+            return subprocess.run([BASH_EXEC, str(KIT / "guest/macports.sh"), *args], env=self.env | {"CCVM_ROOT": str(root)},
+                                  text=True, capture_output=True, timeout=30)
+        self.log.unlink()
+        self.assertIn("PASS macports.allow", mp("allow", "6379").stdout)
+        self.assertIn("PASS macports.allow", mp("allow", "5432").stdout)
+        self.assertIn("FAIL macports.allow", mp("allow", "17897").stdout)
+        self.assertIn("FAIL macports.allow", mp("allow", "0").stdout)
+        self.assertIn("FAIL macports.allow", mp("allow", "1;id").stdout)
+        self.assertEqual((root / "etc/ccvm/mac-ports").read_text(), "5432\n6379\n")
+        self.assertIn("add element inet ccvm mac_ports { 5432,6379 }", self.log.read_text())
+        out = mp("list").stdout
+        self.assertIn("VALUE mac_ports_ready 1", out)
+        self.assertEqual(re.findall(r"^MACPORT (\d+)$", out, re.M), ["5432", "6379"])
+        # 有人手改了列表也一样：17897 和垃圾行不会装进集合
+        (root / "etc/ccvm/mac-ports").write_text("17897\n5432\nabc\n99999\n")
+        self.log.unlink()
+        self.assertIn("PASS macports.deny", mp("deny", "6379").stdout)
+        log = self.log.read_text()
+        self.assertIn("flush set inet ccvm mac_ports", log)
+        self.assertIn("add element inet ccvm mac_ports { 5432 }", log)
+        mp("deny", "5432")
+        self.assertNotIn("add element", self.log.read_text().split("flush set")[-1])
+
+    def test_mac_ports_need_the_upgrade(self):
+        root = self.root / "vmroot"
+        self.old_firewall(root)
+        self.stub("nft", "exit 1")
+        r = subprocess.run([BASH_EXEC, str(KIT / "guest/macports.sh"), "allow", "5432"], env=self.env | {"CCVM_ROOT": str(root)},
+                           text=True, capture_output=True, timeout=30)
+        self.assertIn("FAIL macports.allow VM 还没有这项功能", r.stdout)
+        self.assertFalse((root / "etc/ccvm/mac-ports").exists())
+
     def watchdog(self, active=True, rules=True, routes=True, since_us=0):
         text = (KIT / "guest/upgrade.sh").read_text()
         program = re.search(r"<<'WDEOF' \|\| return 1\n(.*?)\nWDEOF", text, re.S).group(1)

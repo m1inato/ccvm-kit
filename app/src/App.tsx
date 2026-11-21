@@ -8,6 +8,7 @@ import { FilesPage } from './pages/Files';
 import { CapsulePage } from './pages/Capsule';
 import { JobsPage } from './pages/Jobs';
 import { NetworkPage } from './pages/Network';
+import { PortsPage } from './pages/Ports';
 import { ProjectPage } from './pages/Project';
 import { SettingsPage } from './pages/Settings';
 import { WelcomePage } from './pages/Welcome';
@@ -82,6 +83,10 @@ export function App() {
       body = <NetworkPage />;
       nav = 'network';
       break;
+    case 'ports':
+      body = <PortsPage tab={arg} />;
+      nav = 'ports';
+      break;
     case 'settings':
       body = <SettingsPage tab={arg || 'vm'} />;
       nav = 'settings';
@@ -119,6 +124,7 @@ function Sidebar({ snap, nav, go }: { snap: Snapshot; nav: string; go: (to: stri
   const items: [string, string, IconName, string, number | undefined][] = [
     ['projects', '项目', 'layers', '/', snap.projects.length || undefined],
     ['network', '网络', 'globe', '/network', undefined],
+    ['ports', '端口', 'plug', '/ports', snap.ports.forwards.filter((f) => f.state === 'open').length || undefined],
     ['files', '文件', 'folder', '/files', undefined],
     ['jobs', '任务', 'list', '/jobs', runningJobs || undefined],
     ['settings', '设置', 'settings', '/settings', undefined],

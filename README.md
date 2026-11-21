@@ -80,6 +80,9 @@ VM 里没有浏览器：把登录链接复制到 Mac 的浏览器里打开，再
 | 更新已部署的 VM | `bash scripts/upgrade.sh` |
 | 启动 / 停止 VM | `bash scripts/vm.sh start` / `stop` |
 | 列出 VM 里的项目 | `bash scripts/workspace.sh list` |
+| 允许 VM 访问 Mac 的端口（VM 里用 `host.lima.internal:<端口>`） | `bash scripts/ports.sh mac allow <端口>` / `deny` / `list` |
+| 看 VM 里在监听的端口 | `bash scripts/ports.sh list` |
+| 把 VM 的端口转发到 Mac（Ctrl-C 结束） | `bash scripts/ports.sh forward <VM端口> [Mac端口]` |
 | 共享 Mac 文件夹（编辑 `state/shares.txt` 后应用） | `bash scripts/share.sh apply` |
 | 传文件 | `bash scripts/files.sh push <Mac路径> <VM目录>` / `pull <VM文件> <Mac路径>` |
 

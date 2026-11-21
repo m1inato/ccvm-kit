@@ -6,9 +6,9 @@ KIT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT=17897
 TRACE_URL="https://1.1.1.1/cdn-cgi/trace"   # 字面 IPv4（证书含 IP SAN），不依赖 DNS
 LIMA_MIN="2.1.0"
-# VM 级别：guest/upgrade.sh 的步骤数（1：git、tmux；2：networkd 保留 TUN 策略路由 + TUN 看门狗）。
+# VM 级别：guest/upgrade.sh 的步骤数（1：git、tmux；2：networkd 保留 TUN 策略路由 + TUN 看门狗；3：VM → Mac 端口）。
 # install.sh 只覆盖第 1 级，setup.sh 装完再跑 upgrade.sh 到这个级别；App 低于它就提示更新
-VM_LEVEL=2
+VM_LEVEL=3
 # install.sh 自己做到的级别（它装了 git、tmux）
 INSTALL_LEVEL=1
 

@@ -1,7 +1,8 @@
 #!/usr/sbin/nft -f
 # ccvm 主防火墙（VM 内）。install.sh 把 @SBUID@ 替换成 sing-box 系统用户的 UID 后写到 /etc/ccvm/firewall.nft。
 # 原则：除 sb-tun（透明代理）外，物理网卡只允许
-#   - sing-box 进程 → 192.168.5.2:17897（Mac 上的 Clash 专用入口）
+#   - sing-box 进程 → 192.168.5.2:17897（Mac 上的代理入口）
+#   - 任何进程 → 192.168.5.2 上你允许的 Mac 端口（集合 mac_ports，由 /etc/ccvm/mac-ports 决定，开机时装入）
 #   - Lima 管理 SSH 的回包、DHCP
 # 其余全部丢弃。停止 TUN / sing-box 崩溃时不会回落直连。
 # 192.168.5.0/24 是 Lima user-mode 网络，192.168.5.2 = Mac 的 127.0.0.1。
@@ -10,6 +11,8 @@ add table inet ccvm
 delete table inet ccvm
 
 table inet ccvm {
+  set mac_ports { type inet_service; }
+
   chain input {
     type filter hook input priority filter; policy drop;
     iifname "lo" accept
@@ -28,6 +31,7 @@ table inet ccvm {
     oifname "sb-tun" accept
     ct state invalid drop
     meta skuid @SBUID@ ip daddr 192.168.5.2 tcp dport 17897 accept comment "仅 sing-box → Clash 专用入口"
+    ip daddr 192.168.5.2 tcp dport @mac_ports accept comment "VM → Mac 上允许的端口"
     ip daddr 192.168.5.0/24 tcp sport 22 ct state established accept comment "Lima SSH 回包"
     udp sport 68 udp dport 67 accept comment "DHCP"
     limit rate 6/minute burst 10 packets log prefix "ccvm-out-drop: " level info

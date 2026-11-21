@@ -77,6 +77,16 @@ expect EPERM   "cc → UDP 123 (NTP) 阻断"                              cc udp
 expect OK      "Mac → VM:22（Lima SSH）新连接往返正常"                 mac tcp 192.168.5.15 22 send
 expect TIMEOUT "Mac → VM 其他端口 :2222 阻断"                          mac tcp 192.168.5.15 2222
 
+echo "--- VM → Mac 上允许的端口（集合 mac_ports）"
+expect "TIMEOUT|EPERM"   "未允许时 cc → 192.168.5.2:7897 阻断"                  cc tcp 192.168.5.2 7897
+G nft add element inet ccvm mac_ports '{ 7897 }'
+expect OK      "允许 7897 后 cc → 192.168.5.2:7897 放行"               cc tcp 192.168.5.2 7897 send
+expect OK      "允许 7897 后 root → 192.168.5.2:7897 也放行"           root tcp 192.168.5.2 7897 send
+expect "TIMEOUT|EPERM"   "允许的端口只对 Mac 有效：cc → 1.1.1.1:443 仍阻断"     cc tcp 1.1.1.1 443
+expect "TIMEOUT|EPERM"   "cc → 192.168.5.2:17897 仍阻断"                        cc tcp 192.168.5.2 17897
+G nft flush set inet ccvm mac_ports
+expect "TIMEOUT|EPERM"   "清空集合后 cc → 192.168.5.2:7897 又阻断"              cc tcp 192.168.5.2 7897
+
 echo "--- 有 TUN（模拟 auto_route：公网目的地路由进 sb-tun）"
 NLG tun sb-tun; NLG addr sb-tun 172.31.255.1/30; NLG up sb-tun; NLG route-host 1.1.1.1 sb-tun
 expect SENT    "cc → 公网经 sb-tun：防火墙放行（UDP 能发出 = 未被丢弃）" cc udp 1.1.1.1 443

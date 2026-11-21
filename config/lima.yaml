@@ -35,7 +35,7 @@ containerd:
 # 不把你终端里的 http(s)_proxy 注入 VM（否则 VM 会走 Clash 日常端口和日常规则）。
 propagateProxyEnv: false
 
-# 不把 VM 内任何监听端口转发到 Mac。
+# Lima 不自动转发 VM 里的端口；需要时在 App 的「端口」页或用 scripts/ports.sh forward 按需转发。
 # 注意 guestIPMustBeZero: false 不能省：guestIP 为 0.0.0.0 时 Lima 默认把它设为 true，
 # 这条规则就只匹配绑定在 0.0.0.0 的端口，绑定 127.0.0.1 的端口仍会被默认规则转发出来。
 portForwards:
