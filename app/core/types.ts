@@ -1,9 +1,8 @@
-// 主进程与界面共用的类型。界面只拿到 Snapshot，自己不做安全判断。
+// 主进程与界面共用的类型。界面只拿到 Snapshot。
 import type { CoreStatus, LatencyResult, PinnedNode } from './egress';
-import type { CoreConnection, NodeInfo } from './mihomo';
-import type { VergeConnections } from './clashVerge';
+import type { NodeInfo } from './mihomo';
 
-export type { CoreConnection, CoreStatus, LatencyResult, NodeInfo, PinnedNode, VergeConnections };
+export type { CoreStatus, LatencyResult, NodeInfo, PinnedNode };
 
 export type Level = 'ok' | 'busy' | 'idle' | 'error';
 
@@ -112,9 +111,9 @@ export interface RunResult {
   stderrTail: string;
 }
 
-/** 保存下来的一次检查（快速检查、完整验收、断流测试、部署前检查） */
+/** 保存下来的一次检查（状态检查、部署前检查） */
 export interface CheckRecord {
-  kind: 'quick' | 'full' | 'leak' | 'preflight';
+  kind: 'check' | 'preflight';
   at: number;
   ok: boolean;
   reason?: string;
@@ -148,7 +147,7 @@ export interface VmInfo {
   error?: string;
 }
 
-export type JobKind = 'setup' | 'check-full' | 'leaktest' | 'clone' | 'vm-start' | 'vm-stop' | 'shares' | 'push' | 'pull' | 'vm-upgrade';
+export type JobKind = 'setup' | 'clone' | 'vm-start' | 'vm-stop' | 'shares' | 'push' | 'pull' | 'vm-upgrade';
 export type JobState = 'running' | 'done' | 'failed' | 'cancelled';
 
 export interface JobSummary {
@@ -169,18 +168,14 @@ export interface JobSummary {
 }
 
 export type IssueKind =
-  | 'egress_changed'
-  | 'listener_down'
+  | 'proxy_down'
   | 'tun_down'
-  | 'lockdown'
-  | 'lima_config'
-  | 'leak_failed'
+  | 'firewall'
   | 'check_failed'
   | 'check_incomplete'
   | 'core_missing'
   | 'core_down'
-  | 'core_conflict'
-  | 'node_changed';
+  | 'core_conflict';
 
 export interface Issue {
   /** 同一个问题的稳定键；同一个键只通知一次，消失后再出现才再通知 */
@@ -188,8 +183,6 @@ export interface Issue {
   kind: IssueKind;
   title: string;
   detail: string;
-  checkId?: string;
-  data?: Record<string, string>;
 }
 
 export type EgressMode = 'clash-verge' | 'builtin';
@@ -220,7 +213,7 @@ export interface Settings {
   terminalApp: TerminalApp;
   launchAtLogin: boolean;
   egressMode: EgressMode;
-  /** Clash Verge 模式下专用入口固定走的节点名（不是秘密，只用来生成扩展脚本） */
+  /** Clash Verge 模式下 17897 固定走的节点名（只用来生成扩展脚本） */
   nodeName: string;
   claudeLoginConfirmed: boolean;
   welcomeDone: boolean;
@@ -234,8 +227,6 @@ export interface Settings {
   latencyTestUrl: string;
   /** 外观：跟随系统（默认）/ 深色 / 浅色 */
   theme: Theme;
-  /** Clash Verge 外部控制器地址（可选，只读连接用）：127.0.0.1:端口 或 localhost:端口；空表示不用。密钥另存钥匙串 */
-  clashController: string;
 }
 
 export interface VmPackages {
@@ -275,17 +266,13 @@ export interface Snapshot {
   level: Level;
   headline: string;
   detail: string;
-  egress: { host?: string; vm?: string; baseline?: string };
+  egress: { host?: string; vm?: string };
   vm: VmInfo;
-  lastQuick?: CheckRecord;
-  lastFull?: CheckRecord;
-  lastLeak?: CheckRecord;
+  lastCheck?: CheckRecord;
   lastPreflight?: CheckRecord;
-  /** 最近一次检查（快速或完整，取较新的） */
   lastCheckAt?: number;
   checking: boolean;
   issues: Issue[];
-  newSessionsBlocked: boolean;
   jobs: JobSummary[];
   projects: Project[];
   sessions: SessionItem[];
@@ -298,12 +285,8 @@ export interface Snapshot {
   shares: SharesState;
   /** VM 的软件包：级别低于套件要求、或者没有 tmux 时提示补装（不算出错） */
   vmPackages: VmPackages;
-  /** Clash Verge 外部控制器：只给出地址和密钥是否已设置，密钥本身永远不进快照 */
-  clashController: { address: string; secretSet: boolean };
-  /** 手动验收矩阵：项目 id → 勾选时间 */
-  matrix: Record<string, number>;
   settings: Settings;
-  paths: { kit: string; state: string; baselineFile: string; jobs: string };
+  paths: { kit: string; state: string; jobs: string };
   kitVersion: string;
   /** 构建时记下的来源提交（build/kit/BUILD）；从源码运行时没有 */
   kitBuild?: { commit: string; dirty: boolean; built: string };
@@ -313,8 +296,6 @@ export interface Snapshot {
 /** 界面能请求的动作。主进程按白名单逐个校验参数。 */
 export interface Actions {
   quickCheck(): Promise<void>;
-  fullCheck(): Promise<string>;
-  leaktest(): Promise<string>;
   setup(): Promise<string>;
   vmStart(): Promise<string>;
   vmStop(): Promise<string>;
@@ -324,30 +305,24 @@ export interface Actions {
   clone(url: string): Promise<string>;
   refreshClaude(): Promise<void>;
   preflight(): Promise<CheckRecord>;
-  previewRebaseline(): Promise<RunResult>;
-  acceptRebaseline(ip: string): Promise<RunResult | null>;
   openTerminal(project?: string): Promise<void>;
   openAdminShell(): Promise<void>;
   updateSettings(patch: Partial<Settings>): Promise<Settings>;
   chooseStateDir(): Promise<Settings | null>;
   clashScript(node: string): Promise<{ ok: boolean; script?: string; error?: string }>;
   copyText(text: string): Promise<void>;
-  exportReport(): Promise<string | null>;
   openMain(route?: string): Promise<void>;
   openExternal(url: string): Promise<void>;
   dismissCaption(id: number): Promise<void>;
-  setMatrix(id: string, done: boolean): Promise<void>;
   /** 切换出网方式；主进程先弹系统对话框确认，取消时返回 null */
   setEgressMode(mode: EgressMode): Promise<Settings | null>;
   setSubscription(url: string): Promise<NodeInfo[]>;
   updateSubscription(): Promise<{ changed: boolean; detail?: string }>;
-  /** 选定节点（或确认节点变化）；换节点时主进程会弹系统对话框，取消时返回 null */
-  selectNode(name: string): Promise<PinnedNode | null>;
+  selectNode(name: string): Promise<PinnedNode>;
   restartCore(): Promise<void>;
   removeCore(): Promise<boolean>;
   clearSubscription(): Promise<void>;
   setCoreOptions(opts: { autoUpdate?: boolean; viaClashVerge?: boolean }): Promise<void>;
-  coreConnections(): Promise<CoreConnection[]>;
   latencyTest(): Promise<LatencyResult>;
   refreshCore(): Promise<void>;
   killSession(name: string): Promise<boolean>;
@@ -356,12 +331,6 @@ export interface Actions {
   cliStatus(): Promise<CliStatus>;
   /** 补装 VM 软件包：主进程先弹系统对话框确认，取消时返回 null；确认后是后台任务 */
   vmUpgrade(): Promise<string | null>;
-  /** Clash Verge 外部控制器：secret 不传表示不改，null 表示清除 */
-  setClashController(opts: { address: string; secret?: string | null }): Promise<Settings>;
-  /** 只发 GET /version */
-  testClashController(): Promise<{ version: string }>;
-  /** 只读：来自 VM 的连接，以及每条是否正好经 [节点, CC-VM-FIXED] */
-  clashConnections(): Promise<VergeConnections>;
   /** 主进程弹出选文件夹的对话框；取消时返回 null */
   addSharedFolder(): Promise<Settings | null>;
   removeSharedFolder(path: string): Promise<Settings>;

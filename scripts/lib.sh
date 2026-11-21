@@ -4,7 +4,7 @@ set -euo pipefail
 
 KIT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT=17897
-TRACE_URL="https://1.1.1.1/cdn-cgi/trace"   # 字面 IPv4（证书含 IP SAN），两端都不涉及 DNS 与 IPv6 差异
+TRACE_URL="https://1.1.1.1/cdn-cgi/trace"   # 字面 IPv4（证书含 IP SAN），不依赖 DNS
 LIMA_MIN="2.1.0"
 # VM 级别：guest/upgrade.sh 的步骤数（1：git、tmux；2：networkd 保留 TUN 策略路由 + TUN 看门狗）。
 # install.sh 只覆盖第 1 级，setup.sh 装完再跑 upgrade.sh 到这个级别；App 低于它就提示更新
@@ -109,7 +109,6 @@ load_local_config() {
   VM="${CCVM_NAME:-$VM_NAME}"
   export LIMA_HOME="${CCVM_LIMA_HOME:-$VM_HOME}"
   STATE="${CCVM_STATE_DIR:-$STATE_DIR}"
-  BASELINE="$STATE/expected-ip.txt"
   [[ "$VM" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || die "无效的 VM 名称：$VM"
   case "$LIMA_HOME" in /*) ;; *) die "Lima 目录必须是绝对路径：$LIMA_HOME" ;; esac
   case "$STATE" in /*) ;; *) die "状态目录必须是绝对路径：$STATE" ;; esac
@@ -118,18 +117,6 @@ load_local_config
 
 ver_ge() {  # ver_ge 2.2.1 2.1.0 → 真
   awk -v a="$1" -v b="$2" 'BEGIN{split(a,x,".");split(b,y,".");for(i=1;i<=3;i++){if(x[i]+0>y[i]+0)exit 0;if(x[i]+0<y[i]+0)exit 1}exit 0}'
-}
-
-# Lima 每次加载实例（start / shell / list）都会把 $LIMA_HOME/_config/ 下这两个文件合并进配置，
-# 其中的 mounts、networks、provision 会被追加，可能给 VM 挂上 Mac 目录、加网卡或在开机时以 root 跑脚本。
-# 本方案的专用 LIMA_HOME 不应该有它们；存在就停止，而且每个脚本每次都检查，不只在创建时。
-require_clean_lima_home() {
-  local f found=()
-  for f in default.yaml override.yaml; do
-    [ -e "$LIMA_HOME/_config/$f" ] && found+=("$LIMA_HOME/_config/$f")
-  done
-  [ "${#found[@]}" -eq 0 ] || fail_check lima.no_global_config "发现 Lima 全局配置：${found[*]}。它们会被合并进 VM 配置（可能加挂载、网络或开机脚本）。检查内容后移走再继续。"
-  pass_quiet lima.no_global_config "Lima 目录里没有全局覆盖配置（${LIMA_HOME}/_config）"
 }
 
 require_mac() {
@@ -141,12 +128,11 @@ require_mac() {
   ver_ge "$v" "$LIMA_MIN" || fail_check lima.version "Lima $v 过旧，需要 ≥ ${LIMA_MIN}（VM 校时依赖它）：brew upgrade lima"
   pass_quiet lima.version "Lima ${v}（≥ ${LIMA_MIN}）"
   value lima_version "$v"
-  require_clean_lima_home
 }
 
 trace_ip() { awk -F= '$1=="ip"{gsub(/\r/,"",$2); print $2}'; }
 
-# Mac → Clash 专用入口 → 节点 的出口 IP。
+# Mac → 代理入口 127.0.0.1:17897 → 节点 的出口 IP。
 # --noproxy '' 不能省：curl 的 NO_PROXY/no_proxy 即使在指定了 --proxy 时也会让请求绕过代理直连，
 # 只有 --noproxy '' 能覆盖它（见 curl 手册 --noproxy 与 ENVIRONMENT 一节）。
 host_ip() {
@@ -180,45 +166,6 @@ require_running() {
   [ "$st" = Running ] || fail_check vm.running "${1:-VM 未运行}（当前：${st:-不存在}）"
   pass_quiet vm.running "VM 运行中"
 }
-require_baseline() {
-  local b
-  b="$(baseline)" || fail_check baseline.present "缺少基线 ${BASELINE}：先运行 setup.sh"
-  [[ "$b" =~ ^[0-9]+(\.[0-9]+){3}$ ]] || fail_check baseline.present "基线文件内容不是 IPv4：${BASELINE}"
-  pass_quiet baseline.present "出口基线 $b"
-  value baseline "$b"
-  printf '%s\n' "$b"
-}
-
-baseline() { [ -s "$BASELINE" ] && cat "$BASELINE"; }
-
-# 打印所有监听 :$PORT 的本地地址，一行一个。
-# 优先用 netstat：macOS 的 netstat 不需要 sudo 也能看到其他用户（包括以 root 运行的 Clash 内核）的监听。
-listener_addrs() {
-  local out=""
-  if command -v netstat >/dev/null 2>&1; then
-    # 本地地址形如 127.0.0.1.17897、::1.17897、*.17897、192.168.1.10.17897：最后一个点之后是端口
-    out="$(netstat -an 2>/dev/null | awk -v p="$PORT" '$1 ~ /^tcp/ && $6 == "LISTEN" {
-      n = split($4, a, "."); if (a[n] == p) print substr($4, 1, length($4) - length(a[n]) - 1) }' || true)"
-  fi
-  if [ -z "$out" ] && command -v lsof >/dev/null 2>&1; then
-    # 退路：lsof 的 NAME 列形如 127.0.0.1:17897、[::1]:17897、*:17897
-    out="$(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | awk -v p="$PORT" 'NR > 1 {
-      for (i = 1; i <= NF; i++) if ($i ~ (":" p "$")) { s = $i; sub(":" p "$", "", s); gsub(/[][]/, "", s); print s } }' || true)"
-  fi
-  [ -n "$out" ] && sort -u <<<"$out"
-}
-
-# 专用入口的每一个监听地址都必须是 127.0.0.1 或 ::1；看不到监听、或无法确认时一律停止。
-check_listener() {
-  local addrs bad
-  addrs="$(listener_addrs || true)"
-  [ -n "$addrs" ] || fail_check listener.loopback_only "确认不了 :$PORT 的监听地址（netstat / lsof 都没有看到）。CCVM 自带核心没有在运行，或 Clash Verge 的扩展脚本没有生效；也可以用 sudo lsof -nP -iTCP:$PORT -sTCP:LISTEN 查看。无法确认时不继续。"
-  bad="$(awk '$0 != "127.0.0.1" && $0 != "::1"' <<<"$addrs")"
-  value listener_addrs "$(tr '\n' ' ' <<<"$addrs" | sed 's/ $//')"
-  [ -z "$bad" ] || fail_check listener.loopback_only ":$PORT 还监听在非回环地址：$(tr '\n' ' ' <<<"$bad")。扩展脚本里必须是 listen: 127.0.0.1，并检查是否有其他程序占用了这个端口。"
-  pass listener.loopback_only "专用入口只监听在回环地址（$(tr '\n' ' ' <<<"$addrs" | sed 's/ $//')）"
-}
-
 # ---------------------------------------------------------------- 共享文件夹
 # 唯一来源：$STATE/shares.txt，一行一个 Mac 绝对路径；不存在或为空就是没有共享。
 # 挂载名：路径最后一级目录名，[A-Za-z0-9._-] 以外的字符（按字节）换成 _，重名依次加 -2、-3。
@@ -259,7 +206,7 @@ share_path_problem() {
   esac
   [ "$real" != "$home" ] || { echo "不能共享整个家目录：$real"; return 0; }
   case "$real" in "$home"/.*) echo "不能共享家目录下的隐藏目录：$real"; return 0 ;; esac
-  # 敏感位置：不能等于、不能在里面、也不能包含。$STATE、$KIT 也算：否则 VM 能改写出口基线，或改写 Mac 上运行的脚本
+  # 敏感位置：不能等于、不能在里面、也不能包含。$STATE、$KIT 也算：否则 VM 能改写 Mac 上运行的脚本
   for s in "$home/Library" "$home/.ssh" "$home/.gnupg" "$home/.aws" "$home/.config" "$home/.kube" "$home/.docker" \
            "$LIMA_HOME" "$STATE" "$KIT"; do
     sreal="$(real_dir "$s")" || sreal="${s%/}"
@@ -269,37 +216,3 @@ share_path_problem() {
   return 0
 }
 
-# Lima 合并后的实际配置：不能有额外网卡；挂载位置的集合必须正好等于 share_list（多一个、少一个都不行），
-# 而且每个允许的路径都要再过一遍 share_path_problem（防止有人手改 shares.txt）。
-# --allow-missing 只给 setup.sh 用：新建的 VM 还没应用共享，缺挂载只提醒（多出来的照样失败）。
-check_effective_lima_config() {
-  local nets mounts want extra missing p prob n allow_missing=0
-  [ "${1:-}" != --allow-missing ] || allow_missing=1
-  nets="$(limactl list --format '{{len .Config.Networks}}' "$VM" 2>/dev/null || true)"
-  [ "$nets" = 0 ] || fail_check lima.effective_config "VM 实际配置里有额外网络（networks = ${nets:-读不到}）。查看 $LIMA_HOME/$VM/lima.yaml。"
-  mounts="$(limactl list --format '{{range .Config.Mounts}}{{.Location}}{{"\n"}}{{end}}' "$VM" 2>/dev/null)" \
-    || fail_check lima.effective_config "读不到 VM 实际配置里的挂载。查看 $LIMA_HOME/$VM/lima.yaml。"
-  mounts="$(printf '%s\n' "$mounts" | tr -d '\r' | awk 'length($0) > 0' | sed 's#\(.\)/*$#\1#' | LC_ALL=C sort -u)"
-  want="$(share_list | sed 's#\(.\)/*$#\1#' | LC_ALL=C sort -u)"
-  extra="$(LC_ALL=C comm -23 <(printf '%s\n' "$mounts" | awk 'length($0) > 0') <(printf '%s\n' "$want" | awk 'length($0) > 0'))"
-  missing="$(LC_ALL=C comm -13 <(printf '%s\n' "$mounts" | awk 'length($0) > 0') <(printf '%s\n' "$want" | awk 'length($0) > 0'))"
-  [ -z "$extra" ] || fail_check lima.effective_config "VM 实际配置里有没被允许的挂载：$(printf '%s\n' "$extra" | tr '\n' ' ')。允许的共享只来自 $STATE/shares.txt；查看 $LIMA_HOME/$VM/lima.yaml。"
-  if [ -n "$missing" ] && [ "$allow_missing" = 1 ]; then
-    warn "共享文件夹还没有挂进 VM：$(printf '%s\n' "$missing" | tr '\n' ' ')"
-    want="$(LC_ALL=C comm -12 <(printf '%s\n' "$mounts" | awk 'length($0) > 0') <(printf '%s\n' "$want" | awk 'length($0) > 0'))"
-    missing=""
-  fi
-  [ -z "$missing" ] || fail_check lima.effective_config "shares.txt 里的共享文件夹没有挂进 VM：$(printf '%s\n' "$missing" | tr '\n' ' ')。用 share.sh apply（或 App 的「应用并重启 VM」）重新应用。"
-  n=0
-  while IFS= read -r p; do
-    [ -n "$p" ] || continue
-    prob="$(share_path_problem "$p")"
-    [ -z "$prob" ] || fail_check lima.effective_config "挂进 VM 的共享文件夹不允许共享：$prob"
-    n=$((n + 1))
-  done <<<"$want"
-  if [ "$n" -gt 0 ]; then
-    pass lima.effective_config "VM 实际配置：无额外网络，挂载只有允许的 $n 个共享文件夹"
-  else
-    pass lima.effective_config "VM 实际配置：无挂载、无额外网络"
-  fi
-}

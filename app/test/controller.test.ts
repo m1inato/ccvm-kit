@@ -42,45 +42,50 @@ afterEach(() => {
 });
 
 describe('Controller end to end', () => {
-  it('goes green after a passing quick check', async () => {
+  it('goes green after a passing check and shows the exit IP', async () => {
     c = make();
     await c.init();
-    await waitFor(() => c.snapshot().lastQuick && !c.snapshot().checking);
+    await waitFor(() => c.snapshot().lastCheck && !c.snapshot().checking);
     const snap = c.snapshot();
     expect(snap.level, `${snap.headline}：${snap.detail}`).toBe('ok');
-    expect(snap.headline).toBe('受保护');
+    expect(snap.headline).toBe('已连接');
     expect(snap.egress.vm).toBe('203.0.113.7');
-    expect(snap.newSessionsBlocked).toBe(false);
     expect(notes).toEqual([]);
   });
 
-  it('egress change: red, blocks new sessions, notifies exactly once', async () => {
+  it('a different exit IP through the proxy is still green', async () => {
     c = make();
     await c.init();
-    await waitFor(() => c.snapshot().lastQuick);
+    await waitFor(() => c.snapshot().lastCheck && !c.snapshot().checking);
     f.set('host_ip', '198.51.100.9');
-    f.set('selfcheck.out', 'PASS vm.tun_up ok\nFAIL egress.vm_matches_baseline VM 出口 198.51.100.9 ≠ 基线 203.0.113.7\nEGRESS 198.51.100.9\n');
+    f.set('selfcheck.out', 'PASS vm.firewall ok\nPASS vm.tun ok\nPASS vm.proxy 经代理出网，出口 198.51.100.9\nEGRESS 198.51.100.9\n');
+    await c.quickCheck();
+    const snap = c.snapshot();
+    expect(snap.level).toBe('ok');
+    expect(snap.egress.vm).toBe('198.51.100.9');
+    expect(notes).toEqual([]);
+  });
+
+  it('proxy down: red, notifies exactly once, recovers by itself', async () => {
+    c = make();
+    await c.init();
+    await waitFor(() => c.snapshot().lastCheck && !c.snapshot().checking);
+    f.set('host_ip', 'down');
+    f.set('selfcheck.out', 'PASS vm.firewall ok\nPASS vm.tun ok\nFAIL vm.proxy 代理不通，VM 现在断网\nEGRESS \n');
     f.set('selfcheck.rc', '1');
     await c.quickCheck();
     let snap = c.snapshot();
     expect(snap.level).toBe('error');
-    expect(snap.headline).toBe('出口变了');
-    expect(snap.newSessionsBlocked).toBe(true);
-    expect(c.canOpenSession().ok).toBe(false);
-    expect(snap.captions.some((x) => x.sticky && x.text.includes('出口变了'))).toBe(true);
+    expect(snap.headline).toBe('代理断开');
+    expect(snap.captions.some((x) => x.sticky && x.text.includes('代理断开'))).toBe(true);
     await c.quickCheck();
     expect(notes).toHaveLength(1);
-
-    // 核实后更新基线：预览两端一致 → 接受
-    const preview = await c.previewRebaseline();
-    expect(preview.values.host_egress).toBe('198.51.100.9');
-    f.set('selfcheck.out', 'PASS vm.tun_up ok\nPASS egress.vm_matches_baseline VM 出口 = 基线 198.51.100.9\nEGRESS 198.51.100.9\n');
+    f.set('host_ip', '203.0.113.7');
+    f.set('selfcheck.out', 'PASS vm.firewall ok\nPASS vm.tun ok\nPASS vm.proxy ok\nEGRESS 203.0.113.7\n');
     f.set('selfcheck.rc', '0');
-    const accepted = await c.acceptRebaseline('198.51.100.9');
-    expect(accepted.ok).toBe(true);
+    await c.quickCheck();
     snap = c.snapshot();
     expect(snap.level).toBe('ok');
-    expect(snap.egress.baseline).toBe('198.51.100.9');
     expect(snap.captions.some((x) => x.sticky)).toBe(false);
   });
 
@@ -89,7 +94,7 @@ describe('Controller end to end', () => {
     c = make();
     await c.init();
     expect(c.snapshot().level).toBe('idle');
-    expect(c.snapshot().headline).toBe('VM 没有运行');
+    expect(c.snapshot().headline).toBe('VM 已停止');
     expect(f.calls()).not.toContain('shell');
   });
 
@@ -99,7 +104,7 @@ describe('Controller end to end', () => {
     await c.init();
     c.vmStart();
     await waitFor(() => c.snapshot().jobs.find((j) => j.kind === 'vm-start' && j.state === 'done'));
-    await waitFor(() => c.snapshot().lastQuick, 20_000);
+    await waitFor(() => c.snapshot().lastCheck, 20_000);
     expect(c.snapshot().vm.status).toBe('Running');
   });
 
@@ -111,10 +116,10 @@ describe('Controller end to end', () => {
   });
 
   it('only allows one exclusive job at a time', async () => {
-    f.set('leaktest.sleep', '5');
+    f.set('upgrade.sleep', '5');
     c = make();
     await c.init();
-    c.leaktest();
+    c.vmUpgrade();
     expect(() => c.setup()).toThrow(/还在进行/);
   });
 
@@ -122,7 +127,7 @@ describe('Controller end to end', () => {
     c = make();
     const before = c.settings.egressMode;
     const s = c.updateSettings({ checkIntervalMin: 0, egressMode: before === 'builtin' ? 'clash-verge' : 'builtin' });
-    expect(s.checkIntervalMin).toBe(2);
+    expect(s.checkIntervalMin).toBe(1);
     expect(s.egressMode).toBe(before);
     expect(() => c.updateSettings({ stateDir: 'relative' })).toThrow();
     expect(() => c.updateSettings({ vmName: '../x' })).toThrow();
@@ -149,28 +154,6 @@ describe('Controller end to end', () => {
     await expect(c.renameSession('my-api-1', 'x;y')).rejects.toThrow(/会话名/);
     await expect(c.renameSession('a b', 'ok')).rejects.toThrow(/会话名/);
     expect(f.calls()).not.toContain('rename-session');
-  });
-
-  it('Clash Verge controller: address validated, secret kept out of settings and snapshots', () => {
-    let stored: string | undefined;
-    notes = [];
-    c = new Controller({
-      kitDir: KIT, dataDir: f.data, appVersion: 'test', home: f.root, user: 'tester',
-      loginPathOutput: async () => undefined, notify: () => undefined,
-      vergeSecret: { get: () => stored, set: (v) => (stored = v) },
-    });
-    expect(() => c.setClashController({ address: '192.168.1.2:9097' })).toThrow(/回环/);
-    c.setClashController({ address: '127.0.0.1:9097', secret: 'top-secret-xyz' });
-    expect(stored).toBe('top-secret-xyz');
-    const snap = c.snapshot();
-    expect(snap.clashController).toEqual({ address: '127.0.0.1:9097', secretSet: true });
-    expect(JSON.stringify(snap)).not.toContain('top-secret-xyz');
-    expect(fs.readFileSync(path.join(f.data, 'settings.json'), 'utf8')).not.toContain('top-secret-xyz');
-    c.setClashController({ address: '127.0.0.1:9097' }); // 不传密钥：保持
-    expect(stored).toBe('top-secret-xyz');
-    c.setClashController({ address: '', secret: null });
-    expect(stored).toBeUndefined();
-    expect(c.snapshot().clashController).toEqual({ address: '', secretSet: false });
   });
 
   it('settings: terminal app is one of Terminal / iTerm / Ghostty', () => {
@@ -256,7 +239,7 @@ describe('Controller with the built-in egress core', () => {
     expect(snap.level).toBe('error');
   });
 
-  it('node change: red, one clear issue, no duplicate listener issue, sessions blocked; confirm restores', async () => {
+  it('a changed node in the subscription is applied without going red', async () => {
     const m = core();
     c = make(m);
     await c.init();
@@ -265,23 +248,29 @@ describe('Controller with the built-in egress core', () => {
     await check();
     expect(c.snapshot().level).toBe('ok');
     subscription = YAML.stringify({ proxies: [{ ...NODE, password: 'p2' }] });
-    // 核心停了，专用入口也就没人听了
-    fs.writeFileSync(`${f.bin}/netstat`, '#!/bin/bash\nexit 0\n', { mode: 0o755 });
-    await c.updateSubscription();
+    const r = await c.updateSubscription();
+    expect(r.changed).toBe(true);
     await check();
-    let snap = c.snapshot();
-    expect(snap.level).toBe('error');
-    expect(snap.issues.map((i) => i.kind)).toEqual(['node_changed']);
-    expect(snap.newSessionsBlocked).toBe(true);
-    expect(notes.some((n) => n.includes('选定节点变了'))).toBe(true);
-    fs.writeFileSync(`${f.bin}/netstat`, "#!/bin/bash\nprintf 'tcp4 0 0 127.0.0.1.17897 *.* LISTEN\\n'\n", { mode: 0o755 });
-    await c.selectNode(NODE.name);
-    await check();
-    snap = c.snapshot();
+    const snap = c.snapshot();
     expect(snap.issues).toEqual([]);
     expect(snap.level).toBe('ok');
-    // 确认节点后，不会拿核心停着时的旧检查结果再报一次「专用入口不可用」
-    expect(notes.filter((n) => n.includes('专用入口'))).toEqual([]);
+    expect(mac.loaded).toBe(true);
+    expect(notes).toEqual([]);
+  });
+
+  it('a crashed core is one clear issue, not a second "代理断开"', async () => {
+    const m = core();
+    c = make(m);
+    await c.init();
+    await c.setSubscription('https://sub.example.com/s?token=abc');
+    await c.selectNode(NODE.name);
+    mac.loaded = false;
+    f.set('host_ip', 'down');
+    f.set('selfcheck.out', 'PASS vm.firewall ok\nPASS vm.tun ok\nFAIL vm.proxy 代理不通\nEGRESS \n');
+    f.set('selfcheck.rc', '1');
+    await c.refreshCore();
+    await check();
+    expect(c.snapshot().issues.map((i) => i.kind)).toEqual(['core_down']);
   });
 
   it('switching to Clash Verge mode stops the core service', async () => {
@@ -319,20 +308,20 @@ describe('Controller: shared folders and file transfer', () => {
   it('applyShares writes shares.txt, runs share.sh apply, then refreshes and checks again', async () => {
     c = make();
     await c.init();
-    await waitFor(() => c.snapshot().lastQuick && !c.snapshot().checking);
+    await waitFor(() => c.snapshot().lastCheck && !c.snapshot().checking);
     const dir = project();
     c.addSharedFolder(dir + '/');
     c.setSharesEnabled(true);
     expect(c.snapshot().shares.pendingApply).toBe(true);
     f.set('mounts', dir + '\n');
     f.set('shares.out', 'VIEW app 1\nPASS share.guest 已映射 1 个共享文件夹到 /home/cc/mac（读写）\n');
-    const before = c.snapshot().lastQuick!.at;
+    const before = c.snapshot().lastCheck!.at;
     const id = c.applyShares();
     expect(fs.readFileSync(path.join(f.state, 'shares.txt'), 'utf8')).toBe(dir + '\n');
     expect(c.snapshot().jobs.find((j) => j.id === id)?.kind).toBe('shares');
     const job = await waitFor(() => c.snapshot().jobs.find((j) => j.id === id && j.state !== 'running'), 20_000);
     expect(job.state, job.reason).toBe('done');
-    await waitFor(() => c.snapshot().shares.applied.length === 1 && c.snapshot().lastQuick!.at > before && !c.snapshot().checking, 20_000);
+    await waitFor(() => c.snapshot().shares.applied.length === 1 && c.snapshot().lastCheck!.at > before && !c.snapshot().checking, 20_000);
     const snap = c.snapshot();
     expect(snap.shares.applied[0]).toEqual({ path: dir, name: 'app', view: '/home/cc/mac/app', mounted: true });
     expect(snap.shares.pendingApply).toBe(false);
@@ -342,7 +331,7 @@ describe('Controller: shared folders and file transfer', () => {
     await c.refreshShares();
     expect(c.snapshot().shares.applied[0].mounted).toBe(false);
     expect(c.snapshot().shares.needsRetry).toBe(true);
-    expect(c.snapshot().level).toBe('ok'); // 功能问题，不是隔离问题：不变红
+    expect(c.snapshot().level).toBe('ok'); // 共享的问题不影响网络状态
     expect(snap.level, `${snap.headline}：${snap.detail}`).toBe('ok'); // 共享开着仍然是绿色
     expect(JSON.parse(fs.readFileSync(path.join(f.stub, 'edit'), 'utf8').replace(/^\.mounts = /, ''))).toEqual([
       { location: dir, mountPoint: '/mnt/ccvm-raw/app', writable: true },
@@ -399,17 +388,18 @@ describe('Controller: VM package upgrade', () => {
     expect(snap.vmPackages.needsUpgrade).toBe(false);
   });
 
-  it('runs upgrade.sh as an exclusive background job and records the full check', async () => {
+  it('runs upgrade.sh as an exclusive background job, then checks again', async () => {
     c = make();
     await c.init();
-    await waitFor(() => c.snapshot().lastQuick && !c.snapshot().checking);
+    await waitFor(() => c.snapshot().lastCheck && !c.snapshot().checking);
+    const before = c.snapshot().lastCheck!.at;
     f.set('upgrade.out', 'PASS vm.upgrade 已补装到级别 1\nVALUE vm_level 1\n');
     const id = c.vmUpgrade();
     expect(c.snapshot().jobs.find((j) => j.id === id)?.kind).toBe('vm-upgrade');
-    expect(() => c.fullCheck()).toThrow(/还在进行/);
+    expect(() => c.setup()).toThrow(/还在进行/);
     const job = await waitFor(() => c.snapshot().jobs.find((j) => j.id === id && j.state !== 'running'), 20_000);
     expect(job.state, job.reason).toBe('done');
-    await waitFor(() => c.snapshot().lastFull);
-    expect(c.snapshot().lastFull?.checks.some((ch) => ch.id === 'vm.upgrade' && ch.ok)).toBe(true);
+    expect(job.result?.checks.some((ch) => ch.id === 'vm.upgrade' && ch.ok)).toBe(true);
+    await waitFor(() => c.snapshot().lastCheck!.at > before, 20_000);
   });
 });

@@ -73,35 +73,9 @@ describe('CoreManager', () => {
     const st = await m.status();
     expect(st.service.running).toBe(true);
     expect(st.listenerOwned).toBe(true);
-    expect(st.iface).toBe('en0');
   });
 
-  it('uses the second DHCP DNS when the first is routed through a VPN', async () => {
-    mac.dnsServers = ['192.0.2.1', '192.0.2.53'];
-    mac.dnsRoutes['192.0.2.1'] = 'utun4';
-    const m = manager();
-    await m.setSubscription('https://sub.example.com/s');
-    await m.selectNode(NODE_A.name);
-    expect(YAML.parse(fs.readFileSync(m.configFile, 'utf8')).dns['proxy-server-nameserver']).toEqual(['192.0.2.53#en0']);
-    mac.dnsServers = ['192.0.2.54'];
-    expect(await m.onNetworkChange()).toBe('rebound');
-    expect(YAML.parse(fs.readFileSync(m.configFile, 'utf8')).dns.nameserver).toEqual(['192.0.2.54#en0']);
-    mac.dnsRoute = 'utun4';
-    expect(await m.onNetworkChange()).toBe('stopped');
-    expect(mac.loaded).toBe(false);
-    mac.dnsRoute = undefined;
-    expect(await m.onNetworkChange()).toBe('resumed');
-  });
-
-  it('refuses startup without a usable DHCP DNS', async () => {
-    mac.dnsServers = [];
-    const m = manager();
-    await m.setSubscription('https://sub.example.com/s');
-    await expect(m.selectNode(NODE_A.name)).rejects.toThrow(/DHCP DNS/);
-    expect(mac.loaded).toBe(false);
-  });
-
-  it('a changed node stops the core and waits for confirmation; never switches silently', async () => {
+  it('a changed node is applied by itself and the core restarts on it', async () => {
     const m = manager();
     await m.setSubscription('https://sub.example.com/s?token=abc');
     await m.selectNode(NODE_A.name);
@@ -109,18 +83,40 @@ describe('CoreManager', () => {
     subscription = sub({ ...NODE_A, password: 'rotated' }, NODE_B);
     const r = await m.update();
     expect(r.changed).toBe(true);
-    let st = await m.status();
-    expect(st.service.loaded).toBe(false);
-    expect(fs.existsSync(m.plistPath)).toBe(false); // 登录时也不会再用旧节点启动
-    expect(st.pending?.kind).toBe('changed');
-    expect(st.stopped?.reason).toBe('node_changed');
-    expect(fs.readFileSync(m.configFile, 'utf8')).toContain('s3cret'); // 还没换
-    await expect(m.start()).rejects.toThrow(/确认/);
-    await m.selectNode(NODE_A.name); // 确认使用新的节点信息
-    st = await m.status();
-    expect(st.pending).toBeUndefined();
+    const st = await m.status();
     expect(st.service.running).toBe(true);
-    expect(fs.readFileSync(m.configFile, 'utf8')).toContain('rotated');
+    expect(st.node?.name).toBe(NODE_A.name);
+    const cfg = fs.readFileSync(m.configFile, 'utf8');
+    expect(cfg).toContain('rotated');
+    expect(cfg).not.toContain('s3cret');
+    expect(coreConfigProblems(cfg, NODE_A.name)).toEqual([]);
+  });
+
+  it('a node that left the subscription keeps working on the saved config', async () => {
+    const m = manager();
+    await m.setSubscription('https://sub.example.com/s?token=abc');
+    await m.selectNode(NODE_A.name);
+    subscription = sub(NODE_B);
+    expect((await m.update()).changed).toBe(false);
+    const st = await m.status();
+    expect(st.service.running).toBe(true);
+    expect(st.nodeMissing).toBe(true);
+    expect(fs.readFileSync(m.configFile, 'utf8')).toContain('s3cret');
+  });
+
+  it('a config written by an older version (interface binding, DHCP DNS) is rewritten on start', async () => {
+    const m = manager();
+    await m.setSubscription('https://sub.example.com/s?token=abc');
+    await m.selectNode(NODE_A.name);
+    const old = YAML.parse(fs.readFileSync(m.configFile, 'utf8'));
+    old['interface-name'] = 'en0';
+    old.dns = { enable: true, nameserver: ['192.0.2.53#en0'] };
+    fs.writeFileSync(m.configFile, YAML.stringify(old));
+    await m.restart();
+    const cfg = YAML.parse(fs.readFileSync(m.configFile, 'utf8'));
+    expect(cfg['interface-name']).toBeUndefined();
+    expect(cfg.dns).toBeUndefined();
+    expect(cfg.proxies[0].password).toBe('s3cret');
   });
 
   it('compares nodes by content, field by field', () => {
@@ -129,26 +125,6 @@ describe('CoreManager', () => {
     expect(sameNode(NODE_A, { ...NODE_A, password: 'x' })).toBe(false);
     expect(sameNode(NODE_A, { ...NODE_A, port: 8389 })).toBe(false);
     expect(sameNode(NODE_A, { ...NODE_A, extra: true })).toBe(false);
-  });
-
-  it('a hand-edited core config also counts as a change', async () => {
-    const m = manager();
-    await m.setSubscription('https://sub.example.com/s?token=abc');
-    await m.selectNode(NODE_A.name);
-    fs.writeFileSync(m.configFile, fs.readFileSync(m.configFile, 'utf8').replace('s3cret', 'tampered'));
-    expect((await m.update()).changed).toBe(true);
-    expect((await m.status()).service.loaded).toBe(false);
-  });
-
-  it('a node that disappeared stops the core', async () => {
-    const m = manager();
-    await m.setSubscription('https://sub.example.com/s?token=abc');
-    await m.selectNode(NODE_A.name);
-    subscription = sub(NODE_B);
-    await m.update();
-    const st = await m.status();
-    expect(st.pending?.kind).toBe('missing');
-    expect(st.service.loaded).toBe(false);
   });
 
   it('a failed download leaves the running core alone', async () => {
@@ -160,22 +136,6 @@ describe('CoreManager', () => {
     const st = await m.status();
     expect(st.service.running).toBe(true);
     expect(st.subscription.error).toBeTruthy();
-  });
-
-  it('rebinds on interface change, stops without a physical interface, resumes when it returns', async () => {
-    const m = manager();
-    await m.setSubscription('https://sub.example.com/s?token=abc');
-    await m.selectNode(NODE_A.name);
-    expect(await m.onNetworkChange()).toBe('unchanged');
-    mac.iface = 'en7';
-    expect(await m.onNetworkChange()).toBe('rebound');
-    expect(YAML.parse(fs.readFileSync(m.configFile, 'utf8'))['interface-name']).toBe('en7');
-    mac.iface = undefined;
-    expect(await m.onNetworkChange()).toBe('stopped');
-    expect((await m.status()).service.loaded).toBe(false);
-    mac.iface = 'en0';
-    expect(await m.onNetworkChange()).toBe('resumed');
-    expect((await m.status()).service.running).toBe(true);
   });
 
   it('refuses to start when mihomo is missing or too old', async () => {
@@ -218,17 +178,6 @@ describe('CoreManager', () => {
     expect(st.node).toBeUndefined();
     expect(fs.existsSync(m.configFile)).toBe(false);
     expect(st.subscription.set).toBe(true);
-  });
-
-  it('flags a mihomo upgrade until a leak test accepts it', async () => {
-    const m = manager();
-    await m.detect();
-    m.acceptVersion();
-    mac.version = '1.19.40';
-    await m.detect();
-    expect((await m.status()).mihomo.versionChanged).toBe(true);
-    m.acceptVersion();
-    expect((await m.status()).mihomo.versionChanged).toBe(false);
   });
 
   it('passes the via-Clash-Verge option to the downloader', async () => {

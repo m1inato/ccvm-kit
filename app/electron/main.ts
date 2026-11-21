@@ -26,9 +26,8 @@ import { CoreManager, type SecretStore } from '../core/egress';
 import { fetchSubscription } from '../core/fetch';
 import { runCommand } from '../core/runner';
 import { LOGIN_PATH_COMMAND, parseLoginPath } from '../core/env';
-import { isIPv4, PROJECT_NAME } from '../core/parsers';
+import { PROJECT_NAME } from '../core/parsers';
 import { isMacPath } from '../core/vmpath';
-import { reportMarkdown } from '../core/report';
 import { relativeTime } from '../core/status';
 import type { CliStatus, EgressMode, Settings, Snapshot } from '../core/types';
 import { ccvmScript, isGeneratedCcvm, pathHas, PATH_HINT } from '../core/cli';
@@ -204,7 +203,7 @@ function updateTray(snap: Snapshot): void {
   const running = snap.vm.status === 'Running';
   const busyJob = snap.jobs.find((j) => j.state === 'running');
   const items: MenuItemConstructorOptions[] = [
-    { label: `${snap.headline}${snap.egress.vm || snap.egress.baseline ? ` · 出口 ${snap.egress.vm ?? snap.egress.baseline}` : ''}`, enabled: false },
+    { label: `${snap.headline}${snap.level === 'ok' && snap.egress.vm ? ` · ${snap.egress.vm}` : ''}`, enabled: false },
     { label: snap.checking ? '正在检查…' : `上次检查：${relativeTime(snap.lastCheckAt, now)}`, enabled: false },
   ];
   if (snap.core?.node) items.push({ label: `出口核心：${snap.core.node.name}${snap.core.service.running ? '' : '（已停）'}`, enabled: false });
@@ -212,9 +211,8 @@ function updateTray(snap: Snapshot): void {
   items.push(
     { type: 'separator' },
     { label: '打开 CCVM', click: () => openMain() },
-    { label: '在终端打开 cc', enabled: running && !snap.newSessionsBlocked, click: () => act('openTerminal', []) },
+    { label: '在终端打开 cc', enabled: running, click: () => act('openTerminal', []) },
     { label: '立即检查', enabled: running && !snap.checking, click: () => act('quickCheck', []) },
-    { label: '断流测试', enabled: running && !busyJob, click: () => act('leaktest', []) },
   );
   if (snap.level === 'error') items.push({ label: '查看问题…', click: () => openMain('/') });
   items.push(
@@ -225,7 +223,7 @@ function updateTray(snap: Snapshot): void {
     { label: '显示桌面胶囊', type: 'checkbox', checked: snap.settings.showCapsule, click: (m) => act('updateSettings', [{ showCapsule: m.checked }]) },
     { label: '设置…', click: () => openMain('/settings') },
     { type: 'separator' },
-    { label: '退出 CCVM（VM 与隔离照常工作）', click: () => app.quit() },
+    { label: '退出 CCVM（VM 照常运行）', click: () => app.quit() },
   );
   tray.setContextMenu(Menu.buildFromTemplate(items));
 }
@@ -247,44 +245,9 @@ const MODE_TEXT: Record<EgressMode, string> = { builtin: 'CCVM 自带核心', 'c
 function confirmMode(mode: EgressMode): Promise<boolean> {
   const detail =
     mode === 'builtin'
-      ? '切换时 VM 会短暂断网。\n\n切换前请先在 Clash Verge 里移除 CCVM 扩展脚本（否则 17897 会被它占着），自带核心才能接上。还没选节点时，选好节点后核心才启动。\n\n切换后会自动检查；出口和基线不一致时会变红，核实后用「就用新的出口」更新基线。'
-      : '自带核心会停止并卸载，VM 断网，直到 Clash Verge 的扩展脚本接上 17897。\n\n切换后会自动检查；出口和基线不一致时会变红，核实后用「就用新的出口」更新基线。';
+      ? '切换时 VM 会短暂断网。先在 Clash Verge 里移除 CCVM 扩展脚本，自带核心才能用 17897。'
+      : '自带核心会停止，VM 断网，直到 Clash Verge 的扩展脚本接上 17897。';
   return confirm(`切换到「${MODE_TEXT[mode]}」？`, detail, '切换');
-}
-
-async function confirmNode(name: string): Promise<boolean> {
-  const core = controller.snapshot().core;
-  if (core?.pending && core.node?.name === name) {
-    return confirm(
-      `使用「${name}」的新节点信息？`,
-      '订阅里这个节点的地址、端口或密码变了。确认后核心会用新信息重新启动，出口可能随之改变：检查发现出口变了时，核实后再更新基线。',
-      '使用新信息',
-    );
-  }
-  if (core?.node && core.node.name !== name) {
-    return confirm(
-      `换到「${name}」？`,
-      `换节点等于换出口。核心会改用这个节点重启，VM 短暂断网；之后检查会发现出口变了，核实两端一致后再用「就用新的出口」更新基线。\n\n当前节点：${core.node.name}`,
-      '换节点',
-    );
-  }
-  return true; // 第一次选节点
-}
-
-async function confirmRebaseline(ip: string): Promise<boolean> {
-  const opts = {
-    type: 'warning' as const,
-    message: `把出口基线改成 ${ip}？`,
-    detail:
-      `Mac 专用入口和 VM 现在都走 ${ip}。\n\n` +
-      '确认前，请在 Clash Verge 的「连接」里核对：这条链路是 cc-vm-in → CC-VM-FIXED → 你选定的节点。\n' +
-      '确认后，脚本会重新测量两端出口，仍然都等于这个 IP 才写入（等同 rebaseline.sh）。',
-    buttons: ['取消', `就用 ${ip}`],
-    defaultId: 0,
-    cancelId: 0,
-  };
-  const res = mainWin ? await dialog.showMessageBox(mainWin, opts) : await dialog.showMessageBox(opts);
-  return res.response === 1;
 }
 
 function loginPath(): string {
@@ -368,12 +331,10 @@ async function confirmApplyShares(): Promise<boolean> {
     `会重启 VM：正在运行的 ${sessions} 个 tmux 会话（包括里面的 Claude）会被中断。完成后会自动检查一遍。`,
     '',
     folders.length
-      ? '共享是读写的：VM 里的程序（包括 Claude）可以修改这些文件夹里的任何文件，包括脚本、.git/hooks、package.json 里的 scripts。之后在 Mac 上运行它们，就等于以你的权限执行。这些内容也可以经固定出口发出去。'
+      ? '共享是读写的：VM 里的程序（包括 Claude）可以修改这些文件夹里的任何文件，包括脚本和 .git/hooks。之后在 Mac 上运行它们，就等于以你的权限执行。'
       : '这次会移除所有共享：VM 里不再有 Mac 的文件夹。',
     '',
     folders.length ? `要共享的文件夹（VM 里在 /home/cc/mac/ 下）：\n${folders.map((f) => `• ${f}`).join('\n')}` : '',
-    '',
-    '网络隔离不变：VM 仍然只能经选定节点出网，也连不到 Mac 的网络服务。',
   ].join('\n');
   return confirm(folders.length ? `共享 ${folders.length} 个文件夹给 VM（读写）并重启 VM？` : '关闭共享文件夹并重启 VM？', detail.trim(), '应用并重启 VM');
 }
@@ -382,11 +343,7 @@ async function dispatch(name: string, args: unknown[]): Promise<unknown> {
   switch (name) {
     case 'quickCheck':
       await controller.refreshVm();
-      return controller.quickCheck('手动');
-    case 'fullCheck':
-      return controller.fullCheck();
-    case 'leaktest':
-      return controller.leaktest();
+      return controller.quickCheck();
     case 'setup':
       return controller.setup();
     case 'vmStart':
@@ -396,7 +353,7 @@ async function dispatch(name: string, args: unknown[]): Promise<unknown> {
     case 'vmUpgrade': {
       const ok = await confirm(
         '更新 VM？',
-        '按顺序补上早先部署时还没有的东西：\n• 软件包 git、tmux（以 root 运行 apt-get，经固定出口下载）\n• 系统更新重启网络服务后断网的修复：networkd 保留 TUN 的策略路由，加一个 TUN 看门狗（路由丢了自动重启 TUN）\n\n不改防火墙规则、sing-box 配置和 DNS。完成后自动做一次完整验收；进行期间不做别的检查和独占任务。',
+        '补装 git、tmux，并加上 TUN 看门狗（系统更新重启网络服务后自动恢复）。不改防火墙、sing-box 配置和 DNS。',
         '更新',
         'question',
       );
@@ -415,19 +372,9 @@ async function dispatch(name: string, args: unknown[]): Promise<unknown> {
       return controller.refreshClaude();
     case 'preflight':
       return controller.preflight();
-    case 'previewRebaseline':
-      return controller.previewRebaseline();
-    case 'acceptRebaseline': {
-      const ip = str(args[0], 'ip');
-      if (!isIPv4(ip)) throw new Error('不是有效的 IPv4');
-      if (!(await confirmRebaseline(ip))) return null;
-      return controller.acceptRebaseline(ip);
-    }
     case 'openTerminal': {
       const project = args[0] === undefined || args[0] === null ? undefined : str(args[0], 'project');
       if (project !== undefined && !PROJECT_NAME.test(project)) throw new Error('无效的项目名');
-      const gate = controller.canOpenSession();
-      if (!gate.ok) throw new Error(`现在不打开新会话：${gate.reason}`);
       await openInTerminal(project);
       // 带项目时 ccvm 会新建 tmux 会话：过一会儿刷新，让它出现在项目页
       if (project) setTimeout(() => void controller.refreshProjects(), 6000);
@@ -463,8 +410,8 @@ async function dispatch(name: string, args: unknown[]): Promise<unknown> {
     }
     case 'chooseStateDir': {
       const opts: Electron.OpenDialogOptions = {
-        title: '选择存放出口基线的状态目录',
-        message: '可以选命令行套件的 state 目录，让 App 和脚本共用同一份基线',
+        title: '选择状态目录',
+        message: '可以选命令行套件的 state 目录，让 App 和脚本共用共享文件夹设置',
         properties: ['openDirectory', 'createDirectory'],
       };
       const res = mainWin ? await dialog.showOpenDialog(mainWin, opts) : await dialog.showOpenDialog(opts);
@@ -476,18 +423,6 @@ async function dispatch(name: string, args: unknown[]): Promise<unknown> {
     case 'copyText':
       clipboard.writeText(str(args[0], 'text'));
       return;
-    case 'exportReport': {
-      const d = new Date();
-      const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-      const opts: Electron.SaveDialogOptions = {
-        defaultPath: path.join(app.getPath('documents'), `CCVM-验收记录-${stamp}.md`),
-        filters: [{ name: 'Markdown', extensions: ['md'] }],
-      };
-      const res = mainWin ? await dialog.showSaveDialog(mainWin, opts) : await dialog.showSaveDialog(opts);
-      if (res.canceled || !res.filePath) return null;
-      fs.writeFileSync(res.filePath, reportMarkdown(controller.snapshot(), Date.now()));
-      return res.filePath;
-    }
     case 'openMain':
       openMain(args[0] === undefined || args[0] === null ? undefined : str(args[0], 'route'));
       return;
@@ -511,14 +446,12 @@ async function dispatch(name: string, args: unknown[]): Promise<unknown> {
     case 'updateSubscription':
       return controller.updateSubscription();
     case 'selectNode': {
-      const name = str(args[0], 'name');
-      if (!(await confirmNode(name))) return null;
-      return controller.selectNode(name);
+      return controller.selectNode(str(args[0], 'name'));
     }
     case 'restartCore':
       return controller.restartCore();
     case 'removeCore':
-      if (!(await confirm('移除出口核心？', '核心会停止并从登录项里卸载，VM 断网，直到你重新选节点或切换到 Clash Verge。订阅链接保留，可以单独清除。', '移除'))) return false;
+      if (!(await confirm('移除出口核心？', '核心会停止并从登录项里卸载，VM 断网。订阅链接保留。', '移除'))) return false;
       await controller.removeCore();
       return true;
     case 'clearSubscription':
@@ -531,8 +464,6 @@ async function dispatch(name: string, args: unknown[]): Promise<unknown> {
         viaClashVerge: typeof o.viaClashVerge === 'boolean' ? o.viaClashVerge : undefined,
       });
     }
-    case 'coreConnections':
-      return controller.coreConnections();
     case 'latencyTest':
       return controller.latencyTest();
     case 'refreshCore':
@@ -542,15 +473,6 @@ async function dispatch(name: string, args: unknown[]): Promise<unknown> {
       if (!(await confirm(`结束会话「${name}」？`, '会话里正在运行的程序（包括 Claude）会被结束，没保存的东西会丢。只是想关掉标签的话，直接关标签：会话会继续在 VM 里运行。', '结束会话'))) return false;
       return controller.killSession(name);
     }
-    case 'setClashController': {
-      const o = (args[0] ?? {}) as Record<string, unknown>;
-      const secret = o.secret === undefined ? undefined : o.secret === null ? null : str(o.secret, 'secret');
-      return controller.setClashController({ address: str(o.address ?? '', 'address'), secret });
-    }
-    case 'testClashController':
-      return controller.testClashController();
-    case 'clashConnections':
-      return controller.clashConnections();
     case 'renameSession':
       return controller.renameSession(str(args[0], 'from'), str(args[1], 'to'));
     case 'setHooks': {
@@ -616,8 +538,6 @@ async function dispatch(name: string, args: unknown[]): Promise<unknown> {
       // 已存在时系统保存对话框已经问过要不要替换
       return controller.pullFile(src, res.filePath, fs.existsSync(res.filePath));
     }
-    case 'setMatrix':
-      return controller.setMatrix(str(args[0], 'id'), args[1] === true);
     default:
       throw new Error(`未知动作：${name}`);
   }
@@ -710,7 +630,7 @@ app.on('web-contents-created', (_e, contents) => {
 void app.whenReady().then(async () => {
   session.defaultSession.setPermissionRequestHandler((_wc, _permission, cb) => cb(false));
   session.defaultSession.setSpellCheckerEnabled(false); // 否则 Chromium 会去下载拼写词典
-  // App 自己不需要联网：界面只加载本地文件。所有出网都在脚本里，经专用入口。
+  // App 自己不需要联网：界面只加载本地文件。
   const devHost = DEV_URL ? new URL(DEV_URL).host : undefined;
   session.defaultSession.webRequest.onBeforeRequest((details, cb) => {
     let allowed = false;
@@ -745,7 +665,6 @@ void app.whenReady().then(async () => {
     user: os.userInfo().username,
     tmpdir: process.env.TMPDIR,
     loginPathOutput: readLoginPath,
-    vergeSecret: keychainSecret(path.join(dataDir, 'clash-verge', 'controller-secret.enc')),
     notify: (title, body) => {
       if (Notification.isSupported()) new Notification({ title, body }).show();
     },
@@ -770,8 +689,6 @@ void app.whenReady().then(async () => {
     if (mode === 'new') {
       const project = str(r.project, 'project');
       if (!PROJECT_NAME.test(project)) throw new Error('无效的项目名');
-      const gate = controller.canOpenSession();
-      if (!gate.ok) throw new Error(`现在不打开新会话：${gate.reason}`);
       const spec: OpenSpec = { mode, project, session: controller.nextSessionName(project), cols, rows };
       const opened = terminals.open(e.sender, spec);
       setTimeout(() => void controller.refreshProjects(), 4000);

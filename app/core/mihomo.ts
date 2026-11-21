@@ -75,25 +75,17 @@ function isPlainNode(p: unknown): p is RawNode {
   );
 }
 
-const IFACE = /^en\d+$/;
-
 export interface CoreConfigInput {
   node: RawNode;
-  iface: string;
   socketPath: string;
-  dnsServers: string[];
   port?: number;
-  /** 仅测试用：允许绑定回环网卡（lo / lo0），配合本机的假节点 */
-  testLoopback?: boolean;
 }
 
-/** 核心配置：一个入口（127.0.0.1:17897，只收 TCP）、一个节点、其余一律拒绝；绑定物理网卡，自己解析节点域名。 */
+/** 核心配置：一个入口（127.0.0.1:17897，只收 TCP）、一个节点、其余一律拒绝。节点走 Mac 当前的网络和 DNS。 */
 export function buildCoreConfig(input: CoreConfigInput): string {
-  const { node, iface, socketPath } = input;
+  const { node, socketPath } = input;
   const port = input.port ?? CORE_PORT;
-  if (!IFACE.test(iface) && !(input.testLoopback && /^lo\d*$/.test(iface))) throw new Error(`不是物理网卡：${iface}`);
   if (!socketPath.startsWith('/') || socketPath.length > 100) throw new Error('控制 socket 路径必须是绝对路径且不超过 100 个字符');
-  const nameservers = boundDns(input.dnsServers, input.iface);
   const cfg = {
     'allow-lan': false,
     'bind-address': '127.0.0.1',
@@ -102,19 +94,9 @@ export function buildCoreConfig(input: CoreConfigInput): string {
     'log-level': 'warning',
     'find-process-mode': 'off',
     'unified-delay': false,
-    'tcp-concurrent': false,
     'geo-auto-update': false,
-    'interface-name': iface,
     'external-controller-unix': socketPath,
     profile: { 'store-selected': false, 'store-fake-ip': false },
-    // dns.enable 为 false 时 mihomo 会改用系统 DNS（可能被 Clash Verge 接管），所以必须开启；不设 listen，不对外提供 DNS
-    dns: {
-      enable: true,
-      ipv6: false,
-      'respect-rules': false,
-      nameserver: nameservers,
-      'proxy-server-nameserver': nameservers,
-    },
     proxies: [node],
     listeners: [{ name: LISTENER_NAME, type: 'mixed', listen: '127.0.0.1', port, udp: false, users: [], proxy: node.name }],
     rules: ['MATCH,REJECT'],
@@ -124,9 +106,7 @@ export function buildCoreConfig(input: CoreConfigInput): string {
 
 export interface ProbeConfigInput {
   nodes: RawNode[];
-  iface: string;
   socketPath: string;
-  dnsServers: string[];
 }
 
 export const DEFAULT_LATENCY_URL = 'https://www.gstatic.com/generate_204';
@@ -152,8 +132,6 @@ export function latencyUrlProblem(url: unknown): string | null {
  * 正式的核心配置保持 false。
  */
 export function buildProbeConfig(input: ProbeConfigInput): string {
-  if (!IFACE.test(input.iface)) throw new Error(`不是物理网卡：${input.iface}`);
-  const nameservers = boundDns(input.dnsServers, input.iface);
   const cfg = {
     'allow-lan': false,
     'bind-address': '127.0.0.1',
@@ -163,10 +141,8 @@ export function buildProbeConfig(input: ProbeConfigInput): string {
     'find-process-mode': 'off',
     'unified-delay': true,
     'geo-auto-update': false,
-    'interface-name': input.iface,
     'external-controller-unix': input.socketPath,
     profile: { 'store-selected': false, 'store-fake-ip': false },
-    dns: { enable: true, ipv6: false, nameserver: nameservers, 'proxy-server-nameserver': nameservers },
     proxies: input.nodes,
     rules: ['MATCH,REJECT'],
   };
@@ -189,9 +165,8 @@ export function coreConfigProblems(text: string, expectNode: string, port = CORE
   if ('tun' in cfg) problems.push('不应开虚拟网卡（tun）');
   if ('external-controller' in cfg || 'external-controller-tls' in cfg) problems.push('不应开 TCP 控制接口');
   if (cfg['allow-lan'] !== false) problems.push('allow-lan 必须为 false');
-  if (typeof cfg['interface-name'] !== 'string') problems.push('必须绑定网卡');
   const dns = cfg.dns as Record<string, unknown> | undefined;
-  if (!dns || dns.enable !== true || 'listen' in dns) problems.push('DNS 必须开启且不监听');
+  if (dns && 'listen' in dns) problems.push('DNS 不对外监听');
   const proxies = cfg.proxies as { name?: unknown }[] | undefined;
   if (!Array.isArray(proxies) || proxies.length !== 1 || proxies[0]?.name !== expectNode) problems.push('必须只有选定的那一个节点');
   if ('proxy-groups' in cfg || 'proxy-providers' in cfg || 'rule-providers' in cfg) problems.push('不应有策略组或外部 provider');
@@ -209,7 +184,7 @@ export function coreConfigProblems(text: string, expectNode: string, port = CORE
   return problems;
 }
 
-/** 从现有配置里取回节点（换网卡时重写配置用，不用重新下载订阅） */
+/** 从现有配置里取回节点（重启核心时用，不用重新下载订阅） */
 export function nodeFromConfig(text: string): RawNode | undefined {
   try {
     const cfg = YAML.parse(text) as { proxies?: unknown[] };
@@ -218,34 +193,6 @@ export function nodeFromConfig(text: string): RawNode | undefined {
   } catch {
     return undefined;
   }
-}
-
-/** 读取完整 DHCP 租约中的 DNS 列表；不从其它字段猜测，也不使用系统解析器。 */
-export function parseDhcpDns(packet: string): string[] {
-  const list = packet.match(/^\s*domain_name_server\s*\(ip_mult\):\s*\{([^}]+)\}/m)?.[1] ?? '';
-  return [...new Set(list.split(',').map((s) => s.trim()).filter(usableDnsIp))];
-}
-
-function usableDnsIp(ip: string): boolean {
-  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) return false;
-  const n = ip.split('.').map(Number);
-  return n.every((v) => v <= 255) && n[0] > 0 && n[0] < 224 && n[0] !== 127
-    && !(n[0] === 169 && n[1] === 254) && !(n[0] === 198 && (n[1] === 18 || n[1] === 19));
-}
-
-function boundDns(servers: string[], iface: string): string[] {
-  if (!servers.length || servers.some((s) => !usableDnsIp(s))) throw new Error('没有可用的 DHCP DNS 地址');
-  return [...new Set(servers)].map((s) => `${s}#${iface}`);
-}
-
-/** `scutil --nwi` 的 IPv4 部分按优先级列出网卡；取第一块物理网卡（en*），跳过 utun 等虚拟网卡 */
-export function physicalInterface(nwi: string): string | undefined {
-  const ipv4 = nwi.split(/IPv6 network interface information/)[0];
-  for (const line of ipv4.split('\n')) {
-    const m = line.match(/^\s*([a-z]+\d+)\s*:\s*flags/);
-    if (m && IFACE.test(m[1])) return m[1];
-  }
-  return undefined;
 }
 
 export interface LaunchdService {
@@ -335,40 +282,4 @@ export function subscriptionUrlProblem(url: string): string | null {
   if (u.protocol !== 'https:') return '订阅链接要用 https（http 会把账号令牌明文发出去）';
   if (u.username || u.password) return '链接里不要带账号密码';
   return null;
-}
-
-export interface CoreConnection {
-  id: string;
-  host: string;
-  destination: string;
-  inbound: string;
-  chains: string[];
-  upload: number;
-  download: number;
-  start: string;
-}
-
-/** mihomo /connections 的结果 → 界面用的列表（字段参考 tunnel/statistic/tracker.go） */
-export function parseConnections(json: unknown): CoreConnection[] {
-  const list = (json as { connections?: unknown[] })?.connections;
-  if (!Array.isArray(list)) return [];
-  return list.flatMap((c) => {
-    if (!c || typeof c !== 'object') return [];
-    const o = c as Record<string, unknown>;
-    const m = (o.metadata ?? {}) as Record<string, unknown>;
-    const ip = typeof m.destinationIP === 'string' ? m.destinationIP : '';
-    const port = m.destinationPort !== undefined ? String(m.destinationPort) : '';
-    return [
-      {
-        id: String(o.id ?? ''),
-        host: typeof m.host === 'string' ? m.host : '',
-        destination: ip && port ? `${ip}:${port}` : ip,
-        inbound: typeof m.inboundName === 'string' ? m.inboundName : '',
-        chains: Array.isArray(o.chains) ? o.chains.map(String) : [],
-        upload: typeof o.upload === 'number' ? o.upload : 0,
-        download: typeof o.download === 'number' ? o.download : 0,
-        start: typeof o.start === 'string' ? o.start : '',
-      },
-    ];
-  });
 }

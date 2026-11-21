@@ -11,7 +11,6 @@ import { unixGet } from '../core/egress';
 import { buildCoreConfig } from '../core/mihomo';
 
 const BIN = process.env.MIHOMO_BIN;
-const LO = os.platform() === 'darwin' ? 'lo0' : 'lo';
 
 function freePort(): Promise<number> {
   return new Promise((resolve) => {
@@ -87,12 +86,9 @@ describe.skipIf(!BIN)('real mihomo with the generated core config', () => {
     await new Promise((r) => node.once('listening', r));
     port = await freePort();
     const cfg = buildCoreConfig({
-      dnsServers: ['192.0.2.53'],
       node: { name: '测试节点 · 本机', type: 'socks5', server: '127.0.0.1', port: (node.address() as net.AddressInfo).port },
-      iface: LO,
       socketPath: sock(),
       port,
-      testLoopback: true,
     });
     fs.writeFileSync(path.join(dir, 'config.yaml'), cfg);
     child = spawn(BIN!, ['-d', dir, '-f', path.join(dir, 'config.yaml')], { stdio: ['ignore', 'pipe', 'pipe'], env: { PATH: '/usr/bin:/bin', HOME: dir } });

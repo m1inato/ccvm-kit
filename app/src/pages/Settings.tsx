@@ -1,182 +1,37 @@
-// 设置：网络出口 / VM / 检查与提醒 / 共享文件夹 / 通用。
+// 设置：VM / 提醒 / 共享文件夹 / 通用。网络出口在「网络」页。
 import { useEffect, useState } from 'react';
-import { latestChecks } from '../../core/checks';
-import { relativeTime } from '../../core/status';
 import type { CliStatus, Settings } from '../../core/types';
-import { act, errorText, useApp } from '../api';
-import { Badge, gib, Item, Section, Segmented, Toggle } from '../components/common';
-import { CoreDetails, CoreSetup, CoreStatusLine } from '../components/EgressCore';
+import { act, useApp } from '../api';
+import { Badge, gib, Item, PageTitle, Section, Segmented, Toggle } from '../components/common';
 
-const TABS: [string, string][] = [
-  ['egress', '网络出口'],
+type Tab = 'vm' | 'alerts' | 'shares' | 'general';
+const TABS: [Tab, string][] = [
   ['vm', 'VM'],
-  ['checks', '检查与提醒'],
+  ['alerts', '检查与提醒'],
   ['shares', '共享文件夹'],
   ['general', '通用'],
 ];
 
 export function SettingsPage({ tab }: { tab: string }) {
   const { go } = useApp();
+  const current = (TABS.some(([id]) => id === tab) ? tab : 'vm') as Tab;
   return (
-    <>
-      <nav className="sidebar">
-        {TABS.map(([id, label]) => (
-          <button key={id} className={`nav-item ${tab === id ? 'active' : ''}`} onClick={() => go(`/settings/${id}`)}>
-            {label}
-          </button>
-        ))}
-      </nav>
-      <main className="main">
-        {tab === 'egress' && <Egress />}
-        {tab === 'vm' && <Vm />}
-        {tab === 'checks' && <Checks />}
-        {tab === 'shares' && <Shares />}
-        {tab === 'general' && <General />}
-      </main>
-    </>
+    <div className="main-scroll narrow">
+      <PageTitle title="设置" />
+      <div style={{ marginBottom: 26 }}>
+        <Segmented value={current} options={TABS} onChange={(t) => go(`/settings/${t}`)} />
+      </div>
+      {current === 'vm' && <Vm />}
+      {current === 'alerts' && <Alerts />}
+      {current === 'shares' && <Shares />}
+      {current === 'general' && <General />}
+    </div>
   );
 }
 
 function useSave() {
   const { run } = useApp();
   return (patch: Partial<Settings>, ok?: string) => run(() => act('updateSettings', patch), ok);
-}
-
-// ---------------------------------------------------------------- 网络出口
-function Egress() {
-  const { snap, run } = useApp();
-  const mode = snap.settings.egressMode;
-  return (
-    <div className="page">
-      <h1>网络出口</h1>
-      <Section title="出网方式" hint="VM 只连 Mac 上的 127.0.0.1:17897。两种方式对 VM 一样，切换时会短暂断网，之后自动检查。">
-        <Item label={mode === 'builtin' ? 'CCVM 自带核心' : '我的 Clash Verge'}>
-          <Segmented
-            value={mode}
-            options={[
-              ['builtin', '自带核心'],
-              ['clash-verge', 'Clash Verge'],
-            ]}
-            onChange={(m) => m !== mode && void run(() => act('setEgressMode', m))}
-          />
-        </Item>
-      </Section>
-      {mode === 'builtin' ? (
-        <>
-          <CoreStatusLine snap={snap} />
-          <CoreSetup snap={snap} />
-          <CoreDetails snap={snap} />
-        </>
-      ) : (
-        <ClashVergeEgress />
-      )}
-    </div>
-  );
-}
-
-function ClashVergeEgress() {
-  const { snap, now, run } = useApp();
-  const save = useSave();
-  const [node, setNode] = useState(snap.settings.nodeName);
-  const [err, setErr] = useState<string | null>(null);
-  const quick = snap.lastQuick;
-  const listener = quick ? latestChecks(quick.checks).get('listener.loopback_only') : undefined;
-
-  const copy = async () => {
-    const r = await run(() => act('clashScript', node));
-    if (!r?.ok || !r.script) return setErr(r?.error ?? '生成失败');
-    setErr(null);
-    await save({ nodeName: node.trim() });
-    await run(() => act('copyText', r.script!), '已复制扩展脚本');
-  };
-
-  return (
-    <>
-      <Section title="状态">
-        <Item label="专用入口">
-          <Badge level={listener ? (listener.ok ? 'ok' : 'error') : 'idle'}>{listener ? (listener.ok ? '只听回环' : listener.msg) : '还没检查'}</Badge>
-        </Item>
-        <Item
-          label="出口"
-          value={
-            <>
-              <span className="mono">{snap.egress.host ?? '—'}</span>
-              {quick ? ` · ${relativeTime(quick.at, now)}${quick.ok ? '检查通过' : '检查未通过'}` : ''}
-            </>
-          }
-        />
-      </Section>
-
-      <Section title="扩展脚本" hint="在 Clash Verge 的订阅卡片上右键 → 扩展脚本，粘贴并保存，再重新激活订阅。换节点等于换出口，核实后在首页更新基线。">
-        <Item label="节点">
-          <input className="input" style={{ width: 300 }} value={node} onChange={(e) => setNode(e.target.value)} placeholder="和 Clash Verge 里显示的一致" />
-          <button className="btn sm primary" disabled={!node.trim()} onClick={copy}>
-            复制脚本
-          </button>
-        </Item>
-        {err && <Item label={<span className="small err-text">{err}</span>} />}
-      </Section>
-
-      <VergeController />
-    </>
-  );
-}
-
-/** Clash Verge 外部控制器（可选）：「连接」面板只读它 */
-function VergeController() {
-  const { snap, run } = useApp();
-  const cc = snap.clashController;
-  const [address, setAddress] = useState(cc.address || '127.0.0.1:9097');
-  const [secret, setSecret] = useState('');
-  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
-  const save = async () => {
-    const ok = await run(() => act('setClashController', { address: address.trim(), ...(secret ? { secret } : {}) }), '已保存');
-    if (ok) setSecret('');
-  };
-  const test = async () => {
-    setResult(null);
-    try {
-      const v = await act('testClashController');
-      setResult({ ok: true, text: `已连接 · ${v.version}` });
-    } catch (err) {
-      setResult({ ok: false, text: errorText(err) });
-    }
-  };
-  return (
-    <Section
-      title="外部控制器"
-      hint="可选。填上后，安全页会列出来自 VM 的连接并核对链路。只读，只连本机。Clash Verge 默认没开，要在它的设置里打开并设一个密钥。"
-    >
-      <Item label="地址">
-        <input className="input mono" style={{ width: 220 }} value={address} onChange={(e) => setAddress(e.target.value)} placeholder="127.0.0.1:9097" spellCheck={false} />
-      </Item>
-      <Item label="密钥">
-        <input
-          className="input mono"
-          style={{ width: 220 }}
-          type="password"
-          value={secret}
-          onChange={(e) => setSecret(e.target.value)}
-          placeholder={cc.secretSet ? '已设置' : ''}
-          autoComplete="off"
-        />
-      </Item>
-      <div className="item foot">
-        {result && <span className={`note ${result.ok ? 'ok-text' : 'err-text'}`}>{result.text}</span>}
-        {cc.address && (
-          <button className="btn sm ghost" onClick={() => run(() => act('setClashController', { address: '', secret: null }), '已停用')}>
-            停用
-          </button>
-        )}
-        <button className="btn sm" disabled={!cc.address} onClick={() => void test()}>
-          测试连接
-        </button>
-        <button className="btn sm primary" onClick={() => void save()}>
-          保存
-        </button>
-      </div>
-    </Section>
-  );
 }
 
 // ---------------------------------------------------------------- VM
@@ -191,7 +46,6 @@ function Vm() {
   const running = vm.status === 'Running';
   return (
     <div className="page">
-      <h1>VM</h1>
       <Section title="这台 VM">
         <Item label="状态">
           <Badge level={running ? 'ok' : 'idle'}>{running ? '运行中' : vm.status}</Badge>
@@ -209,7 +63,7 @@ function Vm() {
         )}
       </Section>
 
-      <Section title="位置" hint="更换实例名或目录不会迁移 VM。状态目录可以选命令行套件的 state，让 App 和脚本共用一份出口基线。">
+      <Section title="位置" hint="更换实例名或目录不会迁移 VM。状态目录可以选命令行套件的 state，让 App 和脚本共用共享文件夹设置。">
         <Item label="实例名">
           <input className="input" style={{ width: 280 }} value={name} onChange={(e) => setName(e.target.value)} />
         </Item>
@@ -242,16 +96,15 @@ function Vm() {
 }
 
 // ---------------------------------------------------------------- 检查与提醒
-function Checks() {
+function Alerts() {
   const { snap, run } = useApp();
   const save = useSave();
   return (
     <div className="page">
-      <h1>检查与提醒</h1>
-      <Section title="检查" hint="Mac 唤醒、切换网络后会立即检查。结论超过 2.5 个间隔没有更新时，状态变灰。">
-        <Item label="快速检查">
+      <Section title="检查" hint="Mac 唤醒、切换网络后会立即检查；代理断开时每 30 秒查一次，恢复了马上变绿。">
+        <Item label="检查间隔">
           <select className="input" value={snap.settings.checkIntervalMin} onChange={(e) => save({ checkIntervalMin: Number(e.target.value) })}>
-            {[5, 10, 15, 30, 60].map((m) => (
+            {[1, 3, 5, 10, 30].map((m) => (
               <option key={m} value={m}>
                 每 {m} 分钟
               </option>
@@ -259,11 +112,11 @@ function Checks() {
           </select>
         </Item>
       </Section>
-      <Section title="提醒" hint="只有出错会主动打扰你：系统通知一次，同一个问题恢复前不再通知。">
+      <Section title="提醒">
         <Item label="桌面胶囊">
           <Toggle checked={snap.settings.showCapsule} onChange={(v) => save({ showCapsule: v })} />
         </Item>
-        <Item label="Claude 做完了" hint="在 VM 里装一个 Claude 改不了的 hook，只记事件类型、时间和工作目录，不记对话内容。同一项目 5 分钟内只提醒一次。">
+        <Item label="Claude 做完了" hint="在 VM 里装一个 hook，只记事件类型、时间和工作目录，不记对话内容。同一项目 5 分钟内只提醒一次。">
           <Toggle
             checked={snap.settings.hooksEnabled}
             disabled={snap.vm.status !== 'Running'}
@@ -292,12 +145,8 @@ function Shares() {
   const note = sh.needsRetry ? '上次没有应用好' : sh.pendingApply ? '有改动未应用' : '';
   return (
     <div className="page">
-      <h1>共享文件夹</h1>
-      <div className="callout warn">
-        VM 可以读写这些文件夹，包括脚本和 <code>.git/hooks</code>；之后在 Mac 上运行它们，等于以你的权限执行。
-      </div>
       <Section>
-        <Item label="允许 VM 访问共享文件夹">
+        <Item label="允许 VM 访问共享文件夹" hint="VM 可以读写这些文件夹，包括脚本和 .git/hooks。">
           <Toggle checked={s.sharesEnabled} onChange={(v) => run(() => act('setSharesEnabled', v))} />
         </Item>
       </Section>
@@ -351,7 +200,7 @@ function CliItem() {
   const foreign = !!st?.installed && !st.generated;
   return (
     <>
-      <Item label={<>命令行 <code>ccvm</code></>} hint="任意终端里：ccvm 进入 cc，ccvm <项目> 新建会话，ccvm -a <会话> 接回。都会先经过检查。">
+      <Item label={<>命令行 <code>ccvm</code></>} hint="任意终端里：ccvm 进入 cc，ccvm <项目> 新建会话，ccvm -a <会话> 接回。">
         {foreign ? (
           <span className="badge error" title={`${st?.path} 不是 CCVM 生成的，不会覆盖`}>已有同名文件</span>
         ) : st?.generated ? (
@@ -374,12 +223,11 @@ function CliItem() {
 }
 
 function General() {
-  const { snap, go, run } = useApp();
+  const { snap, go } = useApp();
   const save = useSave();
   const build = snap.kitBuild;
   return (
     <div className="page">
-      <h1>通用</h1>
       <Section>
         <Item label="登录时启动">
           <Toggle checked={snap.settings.launchAtLogin} onChange={(v) => save({ launchAtLogin: v })} />
@@ -407,11 +255,6 @@ function General() {
         <CliItem />
       </Section>
       <Section>
-        <Item label="验收记录">
-          <button className="btn sm" onClick={() => run(() => act('exportReport'))}>
-            导出…
-          </button>
-        </Item>
         <Item label="欢迎页">
           <button className="btn sm" onClick={() => go('/welcome')}>
             打开

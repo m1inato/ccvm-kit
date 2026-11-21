@@ -24,7 +24,6 @@ case "$1" in
       *"ccvm-shares.service"*) f=shares ;;
       *"补装软件包（升级步骤）"*) f=upgrade ;;
       *"VM 内以 cc 身份运行"*) f=workspace ;;
-      *"会短暂停止 TUN"*) f=leaktest ;;
       *) f=selfcheck ;;
     esac
     [ -f "$STUB_DIR/$f.sleep" ] && sleep "$(cat "$STUB_DIR/$f.sleep")"
@@ -37,12 +36,9 @@ esac
 `;
 
 export const SELFCHECK_OK = [
-  'PASS vm.firewall_active 防火墙服务运行中',
-  'PASS vm.firewall_main_rules 主防火墙规则已加载（不是锁定模式）',
-  'PASS vm.tun_up TUN 服务运行中且 sb-tun 存在',
-  'PASS vm.tun_routes TUN 的策略路由在',
-  'PASS vm.egress_reachable VM 可经 TUN 出网：203.0.113.7',
-  'PASS egress.vm_matches_baseline VM 出口 = 基线 203.0.113.7',
+  'PASS vm.firewall 防火墙在',
+  'PASS vm.tun TUN 在',
+  'PASS vm.proxy 经代理出网，出口 203.0.113.7',
   'EGRESS 203.0.113.7',
   '',
 ].join('\n');
@@ -70,10 +66,9 @@ export function makeFixture(): Fixture {
   };
   write('limactl', LIMACTL);
   write('uname', '#!/bin/bash\ncase "$1" in -s) echo Darwin;; -m) echo arm64;; *) exit 90;; esac\n');
-  write('curl', `#!/bin/bash\nprintf 'ip=%s\\n' "$(cat "${stub}/host_ip" 2>/dev/null || echo 203.0.113.7)"\n`);
-  write('netstat', "#!/bin/bash\nprintf 'tcp4 0 0 127.0.0.1.17897 *.* LISTEN\\n'\n");
+  // host_ip 写成 down 时代理入口不通
+  write('curl', `#!/bin/bash\nip="$(cat "${stub}/host_ip" 2>/dev/null || echo 203.0.113.7)"\n[ "$ip" = down ] && exit 7\nprintf 'ip=%s\\n' "$ip"\n`);
   fs.writeFileSync(path.join(stub, 'selfcheck.out'), SELFCHECK_OK);
-  fs.writeFileSync(path.join(state, 'expected-ip.txt'), '203.0.113.7\n');
   return {
     root,
     bin,

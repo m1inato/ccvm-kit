@@ -52,16 +52,19 @@ describe('generated app icon', () => {
       expect([png.width, png.height], name).toEqual([size, size]);
       expect(new Set(png.filters)).toEqual(new Set([0]));
       expect(png.px(0, 0)[3], `${name} 角落透明`).toBe(0);
-      expect(png.px(size >> 1, Math.round(size * 0.35))[3], `${name} 盾牌不透明`).toBe(255);
+      expect(png.px(size >> 1, size >> 1)[3], `${name} 中间不透明`).toBe(255);
     }
   });
-  it('draws the shield in the status-dot green on a dark plate', () => {
+  it('draws a charcoal cube with a red prompt on a cream plate', () => {
     const png = readPng(path.join(out, 'icon.iconset', 'icon_512x512.png'));
-    const [r, g, b] = png.px(300, 320); // 盾牌右半边
-    expect(g).toBeGreaterThan(r + 60);
-    expect(g).toBeGreaterThan(b + 60);
-    const plate = png.px(80, 256); // 底板
-    expect(Math.max(plate[0], plate[1], plate[2])).toBeLessThan(50);
+    const plate = png.px(90, 256); // 底板左侧
+    expect(Math.min(plate[0], plate[1], plate[2])).toBeGreaterThan(200);
     expect(plate[3]).toBe(255);
+    const right = png.px(330, 280); // 立方体右侧面
+    expect(Math.max(right[0], right[1], right[2])).toBeLessThan(60);
+    // 提示符「>」的尖：左侧面上 (35.96, 53.86) → 图标坐标
+    const [r, g, b] = png.px(Math.round((0.1 + 0.8 * 0.3596) * 512), Math.round((0.1 + 0.8 * 0.5386) * 512));
+    expect(r).toBeGreaterThan(g + 80);
+    expect(r).toBeGreaterThan(b + 80);
   });
 });

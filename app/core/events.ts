@@ -125,7 +125,7 @@ export class EventStream {
 }
 
 export interface VerdictOptions {
-  /** 这些检查必须出现且通过，否则不算通过（例如断流测试的抓包对照与旁路） */
+  /** 这些检查必须出现且通过，否则不算通过 */
   required?: string[];
 }
 

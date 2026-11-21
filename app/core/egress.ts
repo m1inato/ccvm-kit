@@ -1,9 +1,7 @@
 // 自带出口核心：App 用 launchd 管理一个 mihomo（Homebrew 安装）。只在主进程里用。
-// 规则（设计方案「网络出口」「安全约束」5–8）：
-//  - 只有一个入口 127.0.0.1:17897，只连选定节点，其余拒绝；绑定物理网卡；节点域名用当前网卡的 DHCP DNS 解析
-//  - 订阅链接只在钥匙串；Mac 上只留选定节点的完整内容（配置文件 0600），其他节点只记名称、类型、服务器和指纹
-//  - 选定节点变了或消失：先停核心（VM 断网），等你确认；不会悄悄换节点
-//  - 网卡切换：改绑后重启核心；找不到物理网卡就保持停止
+//  - 只有一个入口 127.0.0.1:17897，只连选定节点，其余拒绝
+//  - 订阅链接只在钥匙串；Mac 上只留选定节点的完整内容（配置文件 0600），其他节点只记名称、类型、服务器
+//  - 订阅更新后选定节点的地址、端口或密码变了：自动换上新的节点信息并重启核心
 import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
@@ -12,8 +10,8 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import {
   buildCoreConfig, buildProbeConfig, CORE_LABEL, CORE_PORT, coreConfigProblems, DEFAULT_LATENCY_URL, latencyUrlProblem, launchAgentPlist, MIHOMO_MIN,
-  nodeFromConfig, parseDhcpDns, parseConnections, parseLaunchctlPrint, parseMihomoVersion, parseSubscription, physicalInterface,
-  subscriptionUrlProblem, maskSubscription, versionAtLeast, type CoreConnection, type NodeInfo, type RawNode,
+  nodeFromConfig, parseLaunchctlPrint, parseMihomoVersion, parseSubscription, subscriptionUrlProblem, maskSubscription, versionAtLeast,
+  type NodeInfo, type RawNode,
 } from './mihomo';
 
 const LATENCY_TIMEOUT = 5000;
@@ -38,7 +36,7 @@ export interface CoreDeps {
   portInUse?: (port: number) => Promise<boolean>;
 }
 
-export type StopReason = 'node_changed' | 'node_missing' | 'no_iface' | 'no_dns' | 'user' | 'mode';
+export type StopReason = 'user' | 'mode';
 
 /** 选定的节点：只记名称、类型、服务器和端口；完整内容只在核心配置文件里（0600） */
 export type PinnedNode = NodeInfo;
@@ -46,28 +44,24 @@ export type PinnedNode = NodeInfo;
 interface CoreState {
   node?: PinnedNode;
   nodes?: NodeInfo[];
-  iface?: string;
-  dnsServers?: string[];
-  acceptedVersion?: string;
   lastUpdate?: number;
   lastUpdateError?: string;
   autoUpdate: boolean;
   viaClashVerge: boolean;
   stopped?: { reason: StopReason; at: number; detail: string };
-  pending?: { kind: 'changed' | 'missing'; at: number; info?: NodeInfo };
 }
 
 export interface CoreStatus {
-  mihomo: { path?: string; version?: string; versionOk: boolean; versionChanged: boolean };
+  mihomo: { path?: string; version?: string; versionOk: boolean };
   service: { loaded: boolean; running: boolean; pid?: number; lastExit?: string };
   /** 核心进程自己在监听 17897（不是别的程序占着） */
   listenerOwned?: boolean;
   portBusy?: boolean;
-  iface?: string;
   node?: PinnedNode;
+  /** 选定节点已经不在订阅里（核心照旧用记下的节点信息） */
+  nodeMissing: boolean;
   nodes: NodeInfo[];
   subscription: { set: boolean; masked?: string; lastUpdate?: number; error?: string; autoUpdate: boolean; viaClashVerge: boolean };
-  pending?: CoreState['pending'];
   stopped?: CoreState['stopped'];
   latency: Record<string, number | null>;
   latencyAt?: number;
@@ -146,13 +140,12 @@ export class CoreManager {
         path: this.mihomoPath,
         version: this.mihomoVersion,
         versionOk: versionAtLeast(this.mihomoVersion, MIHOMO_MIN),
-        versionChanged: !!this.mihomoVersion && !!this.state.acceptedVersion && this.mihomoVersion !== this.state.acceptedVersion,
       },
       service,
       listenerOwned,
       portBusy,
-      iface: this.state.iface,
       node: this.state.node,
+      nodeMissing: !!this.state.node && !!this.state.nodes?.length && !this.state.nodes.some((n) => n.name === this.state.node?.name),
       nodes: this.state.nodes ?? [],
       subscription: {
         set: !!url,
@@ -162,7 +155,6 @@ export class CoreManager {
         autoUpdate: this.state.autoUpdate,
         viaClashVerge: this.state.viaClashVerge,
       },
-      pending: this.state.pending,
       stopped: this.state.stopped,
       latency: this.latency,
       latencyAt: this.latencyAt,
@@ -170,14 +162,6 @@ export class CoreManager {
       latencyUnified: this.latencyUrl ? true : undefined,
       checkedAt: this.now(),
     };
-  }
-
-  /** 断流测试在新版本 mihomo 下通过后，记下这个版本 */
-  acceptVersion(): void {
-    if (this.mihomoVersion) {
-      this.state.acceptedVersion = this.mihomoVersion;
-      this.save();
-    }
   }
 
   setOptions(opts: { autoUpdate?: boolean; viaClashVerge?: boolean }): void {
@@ -205,7 +189,7 @@ export class CoreManager {
     return this.state.autoUpdate && !!this.deps.secrets.get() && this.now() - (this.state.lastUpdate ?? 0) > 24 * 3600_000;
   }
 
-  /** 更新订阅。选定节点变了或消失：停核心，等确认。下载失败不动核心。 */
+  /** 更新订阅。选定节点的信息变了就换上新的并重启核心；节点不在订阅里了就继续用记下的信息。下载失败不动核心。 */
   async update(): Promise<{ changed: boolean; detail?: string }> {
     const url = this.deps.secrets.get();
     if (!url) throw new Error('还没有订阅链接');
@@ -221,20 +205,13 @@ export class CoreManager {
     const pinned = this.state.node;
     if (!pinned) return { changed: false };
     const fresh = parsed.raw.find((n) => n.name === pinned.name);
-    if (!fresh) {
-      this.state.pending = { kind: 'missing', at: this.now() };
-      await this.stop('node_missing', `选定节点「${pinned.name}」不在订阅里了`);
-      return { changed: true, detail: this.state.stopped?.detail };
-    }
-    // 和核心配置里正在用的节点逐字段比较；配置读不到也按「变了」处理（不确定就当失败）
     const current = this.configuredNode();
-    if (!current || !sameNode(current, fresh)) {
-      this.state.pending = { kind: 'changed', at: this.now(), info: info(fresh) };
-      await this.stop('node_changed', `选定节点「${pinned.name}」的地址、端口或密码变了`);
-      return { changed: true, detail: this.state.stopped?.detail };
-    }
+    if (!fresh || (current && sameNode(current, fresh))) return { changed: false };
+    this.writeConfig(fresh);
+    this.state.node = info(fresh);
     this.save();
-    return { changed: false };
+    if (!this.state.stopped) await this.start();
+    return { changed: true, detail: `「${pinned.name}」的节点信息已更新` };
   }
 
   private async download(url: string): Promise<{ raw: RawNode[] }> {
@@ -253,7 +230,7 @@ export class CoreManager {
   }
 
   // ---------------------------------------------------------------- 节点与服务
-  /** 选定（或确认）节点：重新下载订阅取完整内容，写配置，启动核心。调用前要已经确认过。 */
+  /** 选定节点：重新下载订阅取完整内容，写配置，启动核心。 */
   async selectNode(name: string): Promise<PinnedNode> {
     const url = this.deps.secrets.get();
     if (!url) throw new Error('还没有订阅链接');
@@ -261,11 +238,8 @@ export class CoreManager {
     this.applyList(parsed.raw);
     const node = parsed.raw.find((n) => n.name === name);
     if (!node) throw new Error(`订阅里没有节点「${name}」`);
-    const iface = await this.currentIface();
-    if (!iface) throw new Error('找不到可用的物理网卡（Wi-Fi / 有线）');
-    await this.writeConfig(node, iface);
+    this.writeConfig(node);
     this.state.node = info(node);
-    this.state.pending = undefined;
     this.state.stopped = undefined;
     this.save();
     await this.start();
@@ -277,23 +251,10 @@ export class CoreManager {
     if (!this.mihomoPath) throw new Error('找不到 mihomo：先在终端运行 brew install mihomo');
     if (!versionAtLeast(this.mihomoVersion, MIHOMO_MIN)) throw new Error(`mihomo ${this.mihomoVersion ?? '?'} 太旧，需要 ≥ ${MIHOMO_MIN}：brew upgrade mihomo`);
     if (!this.state.node) throw new Error('还没有选定节点');
-    if (this.state.pending) throw new Error('选定节点变了，先确认再启动');
     const node = this.configuredNode();
-    const pinned = this.state.node;
-    if (!node || node.name !== pinned.name || String(node.type).toLowerCase() !== pinned.type || node.server !== pinned.server || Number(node.port) !== pinned.port) {
-      throw new Error('核心配置和选定节点对不上，请重新选择节点');
-    }
-    const iface = await this.currentIface();
-    if (!iface) {
-      await this.stop('no_iface', '没有可用的物理网卡，出口核心保持停止（VM 断网）');
-      return;
-    }
-    try {
-      await this.writeConfig(node, iface);
-    } catch (err) {
-      await this.stop('no_dns', String((err as Error).message));
-      throw err;
-    }
+    if (!node || node.name !== this.state.node.name) throw new Error('核心配置和选定节点对不上，请重新选择节点');
+    // 老版本写的配置可能绑着网卡、带着 DHCP DNS：按现在的格式重写一遍
+    this.writeConfig(node);
     const status = parseLaunchctlPrint((await this.deps.exec('launchctl', ['print', this.target], 5000)).code, '');
     // 刚停掉的旧进程可能还没释放端口：最多等 3 秒
     let busy = !status.loaded && (await this.portBusy());
@@ -331,35 +292,7 @@ export class CoreManager {
     await this.stop('user', '出口核心已移除');
     fs.rmSync(this.configFile, { force: true });
     this.state.node = undefined;
-    this.state.pending = undefined;
-    this.state.iface = undefined;
     this.save();
-  }
-
-  /** 网络切换后调用：网卡变了就改绑重启；没有物理网卡就停；网卡回来且之前是因为没网卡停的，就恢复 */
-  async onNetworkChange(): Promise<'unchanged' | 'rebound' | 'stopped' | 'resumed'> {
-    if (!this.state.node || this.state.pending) return 'unchanged';
-    const stopped = this.state.stopped;
-    if (stopped && stopped.reason !== 'no_iface' && stopped.reason !== 'no_dns') return 'unchanged';
-    const iface = await this.currentIface();
-    if (!iface) {
-      if (!stopped) await this.stop('no_iface', '没有可用的物理网卡，出口核心已停（VM 断网）');
-      return stopped ? 'unchanged' : 'stopped';
-    }
-    let dnsServers: string[];
-    try { dnsServers = await this.currentDns(iface); }
-    catch (err) {
-      await this.stop('no_dns', String((err as Error).message));
-      return 'stopped';
-    }
-    if (stopped?.reason === 'no_iface' || stopped?.reason === 'no_dns' || iface !== this.state.iface
-      || JSON.stringify(dnsServers) !== JSON.stringify(this.state.dnsServers)) {
-      // 先断网再改绑：停 → 写新配置 → 启动；跟不上就保持停止
-      await this.deps.exec('launchctl', ['bootout', this.target], 10_000);
-      await this.start();
-      return stopped ? 'resumed' : 'rebound';
-    }
-    return 'unchanged';
   }
 
   /** 核心配置文件里正在用的完整节点 */
@@ -368,30 +301,11 @@ export class CoreManager {
     return text ? nodeFromConfig(text) : undefined;
   }
 
-  private async currentIface(): Promise<string | undefined> {
-    const nwi = await this.deps.exec('scutil', ['--nwi'], 5000);
-    return nwi.code === 0 ? physicalInterface(nwi.stdout) : undefined;
-  }
-
-  private async currentDns(iface: string): Promise<string[]> {
-    const packet = await this.deps.exec('/usr/sbin/ipconfig', ['getpacket', iface], 5000);
-    const servers: string[] = [];
-    for (const ip of packet.code === 0 ? parseDhcpDns(packet.stdout) : []) {
-      const route = await this.deps.exec('/sbin/route', ['-n', 'get', ip], 5000);
-      if (route.code === 0 && route.stdout.match(/^\s*interface:\s*(\S+)/m)?.[1] === iface) servers.push(ip);
-    }
-    if (!servers.length) throw new Error(`网卡 ${iface} 没有经物理网卡可达的 DHCP DNS；核心保持停止`);
-    return servers;
-  }
-
-  private async writeConfig(node: RawNode, iface: string): Promise<void> {
-    const dnsServers = await this.currentDns(iface);
-    const text = buildCoreConfig({ node, iface, dnsServers, socketPath: this.socketPath });
+  private writeConfig(node: RawNode): void {
+    const text = buildCoreConfig({ node, socketPath: this.socketPath });
     const problems = coreConfigProblems(text, node.name);
     if (problems.length) throw new Error(`生成的核心配置没有通过自检：${problems.join('；')}`);
     writePrivate(this.configFile, text, 0o600);
-    this.state.iface = iface;
-    this.state.dnsServers = dnsServers;
   }
 
   private portBusy(): Promise<boolean> {
@@ -399,11 +313,6 @@ export class CoreManager {
   }
 
   // ---------------------------------------------------------------- 读数据
-  async connections(): Promise<CoreConnection[]> {
-    const json = await unixGet(this.socketPath, '/connections', 3000);
-    return parseConnections(json);
-  }
-
   /**
    * 测延迟：重新下载订阅（只在内存里），临时起一个没有任何入口的 mihomo（统一延迟），逐个节点访问测试地址，测完就删。
    * 每个节点先测一次热身（临时核心是冷启动的），取第二次的结果；第二次失败才记为超时。
@@ -415,17 +324,14 @@ export class CoreManager {
     if (!this.mihomoPath) throw new Error('找不到 mihomo：brew install mihomo');
     const url = this.deps.secrets.get();
     if (!url) throw new Error('还没有订阅链接');
-    const iface = await this.currentIface();
-    if (!iface) throw new Error('找不到可用的物理网卡');
     const parsed = await this.download(url);
     this.applyList(parsed.raw);
-    const dnsServers = await this.currentDns(iface);
     // socket 路径不能太长，用系统临时目录下的短目录（0700）
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ccvm-probe-'));
     fs.chmodSync(tmp, 0o700);
     const sock = path.join(tmp, 'p.sock');
     const cfgFile = path.join(tmp, 'probe.yaml');
-    writePrivate(cfgFile, buildProbeConfig({ nodes: parsed.raw, iface, dnsServers, socketPath: sock }), 0o600);
+    writePrivate(cfgFile, buildProbeConfig({ nodes: parsed.raw, socketPath: sock }), 0o600);
     const child = spawn(this.mihomoPath, ['-d', tmp, '-f', cfgFile], { stdio: 'ignore', env: { PATH: '/usr/bin:/bin', HOME: this.deps.home } });
     const result: Record<string, number | null> = {};
     try {

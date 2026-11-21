@@ -1,5 +1,6 @@
 // App 图标：构建时用代码画出来（仓库里不放二进制图片，发布检查会拒绝）。
-// 深色圆角方块，中间一面盾牌，颜色和菜单栏的「受保护」状态点一致。
+// 米色圆角底板，中间一个炭黑的等轴立方体（VM），左侧面上一个红色提示符「>_」。
+// 和界面里的 Logo（src/components/Icon.tsx）是同一套 100×100 坐标。
 // 输出 build/icon.iconset/*.png；macOS 上再用 iconutil 转成 build/icon.icns，没有 iconutil 时只生成 PNG。
 // PNG 编码只用 Node 自带的 zlib：deflate 压缩，加上 PNG 格式本身规定的 CRC32 块校验。
 // 用法：node build/make-icon.mjs [--out 目录] [--no-icns]
@@ -74,51 +75,72 @@ export function encodePng(width, height, rgba) {
 }
 
 // ---------------------------------------------------------------- 画图
-// 坐标归一到 [0,1]。底板按 macOS 图标网格：四周留白约 10%，圆角约为边长的 22%
-const PLATE = { x0: 0.1, y0: 0.1, x1: 0.9, y1: 0.9, r: 0.18 };
+// 坐标归一到 [0,1]。底板按 macOS 图标网格：四周留白 10%；圆角用超椭圆（n=5），比圆角矩形更接近系统图标
+const PLATE = { x0: 0.1, y0: 0.1, x1: 0.9, y1: 0.9 };
 
-function inRoundRect(x, y, { x0, y0, x1, y1, r }) {
-  if (x < x0 || x > x1 || y < y0 || y > y1) return false;
-  const cx = Math.min(Math.max(x, x0 + r), x1 - r);
-  const cy = Math.min(Math.max(y, y0 + r), y1 - r);
-  return (x - cx) ** 2 + (y - cy) ** 2 <= r * r;
+function inSquircle(x, y) {
+  const cx = (PLATE.x0 + PLATE.x1) / 2;
+  const cy = (PLATE.y0 + PLATE.y1) / 2;
+  const r = (PLATE.x1 - PLATE.x0) / 2;
+  return Math.abs((x - cx) / r) ** 5 + Math.abs((y - cy) / r) ** 5 <= 1;
 }
 
-/** 盾牌：上沿略带弧度，两侧竖直，下半部收成圆润的尖。scale 用来画内层高光 */
-function inShield(x, y, scale = 1) {
-  const cx = 0.5;
-  const top = 0.27;
-  const mid = 0.52;
-  const bottom = 0.8;
-  const w = 0.215;
-  const u = (x - cx) / scale;
-  const v = (y - (top + bottom) / 2) / scale + (top + bottom) / 2;
-  const half = w;
-  if (Math.abs(u) > half) return false;
-  const topEdge = top + 0.035 * (u / half) ** 2 - 0.012; // 两角略低、中间略高
-  if (v < topEdge) return false;
-  if (v <= mid) return true;
-  if (v > bottom) return false;
-  const t = (v - mid) / (bottom - mid);
-  return Math.abs(u) <= half * Math.sqrt(1 - t * t) * (1 - 0.25 * t);
+/** Logo 的 100×100 坐标 → 图标坐标 */
+const P = (u, v) => [PLATE.x0 + (PLATE.x1 - PLATE.x0) * (u / 100), PLATE.y0 + (PLATE.y1 - PLATE.y0) * (v / 100)];
+const TOP = [P(50, 47), P(23, 31.4), P(50, 15.8), P(77, 31.4)];
+const LEFT = [P(50, 47), P(23, 31.4), P(23, 62.6), P(50, 78.2)];
+const RIGHT = [P(50, 47), P(77, 31.4), P(77, 62.6), P(50, 78.2)];
+// 左侧面上的「>_」：面坐标 (s,t) → (23 + 27s, 31.4 + 15.6s + 31.2t)
+const CHEVRON = [[P(28.94, 44.19), P(35.96, 53.86)], [P(35.96, 53.86), P(28.94, 55.42)]];
+const UNDERSCORE = [[P(38.12, 61.35), P(45.14, 65.41)]];
+const STROKE = (3.8 / 100) * (PLATE.x1 - PLATE.x0) / 2; // 半宽
+const SHADOW = { c: P(50, 84), rx: 0.3 * 0.8, ry: 0.045 * 0.8 };
+
+/** 点在凸多边形里（顶点按顺序给出，方向不限） */
+function inConvex(x, y, poly) {
+  let sign = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const [ax, ay] = poly[i];
+    const [bx, by] = poly[(i + 1) % poly.length];
+    const c = (bx - ax) * (y - ay) - (by - ay) * (x - ax);
+    if (c !== 0) {
+      if (sign === 0) sign = Math.sign(c);
+      else if (Math.sign(c) !== sign) return false;
+    }
+  }
+  return true;
 }
 
-const OK = [63, 185, 80]; // 菜单栏「受保护」状态点的颜色（electron/trayIcon.ts）
+function segDist(x, y, [[ax, ay], [bx, by]]) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const t = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy)));
+  return Math.hypot(x - (ax + t * dx), y - (ay + t * dy));
+}
+
 const lerp = (a, b, t) => a + (b - a) * t;
+const mix = (c1, c2, t) => c1.map((v, i) => lerp(v, c2[i], t));
+const RED = [229, 83, 61];
 
 /** 一个采样点的颜色（预乘之前的 RGBA，0–255） */
 function sample(x, y) {
-  if (!inRoundRect(x, y, PLATE)) return [0, 0, 0, 0];
-  // 底板：自上而下 #1b222c → #0d1117
+  if (!inSquircle(x, y)) return [0, 0, 0, 0];
+  // 底板：米色，自上而下 #f6f2ea → #e9e2d4
   const g = (y - PLATE.y0) / (PLATE.y1 - PLATE.y0);
-  let c = [lerp(27, 13, g), lerp(34, 17, g), lerp(44, 23, g)];
-  if (inShield(x, y)) {
-    // 盾牌：状态点的绿，上亮下暗；左半边加一点高光
-    const s = (y - 0.27) / 0.53;
-    c = [lerp(OK[0] + 18, OK[0] - 20, s), lerp(OK[1] + 18, OK[1] - 25, s), lerp(OK[2] + 12, OK[2] - 15, s)];
-    if (x < 0.5 && inShield(x, y, 0.82)) c = c.map((v) => Math.min(255, v + 14));
-    // 盾牌中间一个深色圆点：「受保护」的那个点
-    if ((x - 0.5) ** 2 + (y - 0.47) ** 2 <= 0.062 ** 2) c = [13, 17, 23];
+  let c = mix([246, 242, 234], [233, 226, 212], g);
+  // 立方体下方的柔和阴影
+  const sx = (x - SHADOW.c[0]) / SHADOW.rx;
+  const sy = (y - SHADOW.c[1]) / SHADOW.ry;
+  const sd = sx * sx + sy * sy;
+  if (sd < 1) c = mix(c, [0, 0, 0], 0.1 * (1 - sd));
+  if (inConvex(x, y, TOP)) {
+    c = mix([79, 82, 93], [64, 67, 77], (y - TOP[2][1]) / (TOP[0][1] - TOP[2][1]));
+  } else if (inConvex(x, y, LEFT)) {
+    c = mix([48, 50, 58], [40, 42, 49], (y - LEFT[1][1]) / (LEFT[3][1] - LEFT[1][1]));
+    const d = Math.min(...CHEVRON.map((s) => segDist(x, y, s)), ...UNDERSCORE.map((s) => segDist(x, y, s)));
+    if (d <= STROKE) c = RED;
+  } else if (inConvex(x, y, RIGHT)) {
+    c = mix([31, 33, 38], [26, 27, 32], (y - RIGHT[1][1]) / (RIGHT[3][1] - RIGHT[1][1]));
   }
   return [c[0], c[1], c[2], 255];
 }

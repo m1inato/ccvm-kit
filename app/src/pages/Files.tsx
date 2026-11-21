@@ -5,6 +5,7 @@ import { isMacPath } from '../../core/vmpath';
 import type { FileListing } from '../../core/types';
 import { act, errorText, getBridge, useApp } from '../api';
 import { formatBytes } from '../components/common';
+import { Icon } from '../components/Icon';
 
 const HOME = '/home/cc';
 
@@ -68,7 +69,7 @@ export function FilesPage({ path }: { path: string }) {
     const bridge = await getBridge();
     const paths = bridge.pathsForFiles?.(Array.from(e.dataTransfer.files)) ?? [];
     if (!paths.length) return;
-    await run(() => act('pushPaths', paths, here), `已开始上传 ${paths.length} 项，进度在「后台任务」里`);
+    await run(() => act('pushPaths', paths, here), `已开始上传 ${paths.length} 项，进度在「任务」里`);
   };
 
   const mkdir = async () => {
@@ -100,8 +101,8 @@ export function FilesPage({ path }: { path: string }) {
   };
 
   return (
-    <main
-      className={`main files ${dragging ? 'dragging' : ''}`}
+    <div
+      className={`main-scroll files ${dragging ? 'dragging' : ''}`}
       onDragOver={(e) => {
         e.preventDefault();
         setDragging(true);
@@ -109,9 +110,11 @@ export function FilesPage({ path }: { path: string }) {
       onDragLeave={() => setDragging(false)}
       onDrop={(e) => void onDrop(e)}
     >
-      <div className="page-head">
-        <div className="grow">
-          <h1>文件</h1>
+      <div className="page-title">
+        <h1>文件</h1>
+      </div>
+      <div className="row" style={{ alignItems: 'flex-start', gap: 16, marginBottom: 6 }}>
+        <div className="grow" style={{ paddingTop: 6 }}>
           <div className="crumbs">
             {crumbs.map((c, i) => {
               const p = '/' + crumbs.slice(0, i + 1).join('/');
@@ -126,10 +129,11 @@ export function FilesPage({ path }: { path: string }) {
           </div>
         </div>
         <div className="row wrap">
-          <button className="btn sm" disabled={!running} onClick={() => run(() => act('chooseUpload', here, false), '已开始上传，进度在「后台任务」里')}>
+          <button className="btn sm" disabled={!running} onClick={() => run(() => act('chooseUpload', here, false), '已开始上传，进度在「任务」里')}>
+            <Icon name="upload" size={14} />
             上传文件
           </button>
-          <button className="btn sm" disabled={!running} onClick={() => run(() => act('chooseUpload', here, true), '已开始上传，进度在「后台任务」里')}>
+          <button className="btn sm" disabled={!running} onClick={() => run(() => act('chooseUpload', here, true), '已开始上传，进度在「任务」里')}>
             上传文件夹
           </button>
           {newName === null ? (
@@ -157,15 +161,16 @@ export function FilesPage({ path }: { path: string }) {
             className="btn sm"
             disabled={!running || !sel || sel.file_type !== 'file'}
             title="只能下载单个普通文件"
-            onClick={() => sel && run(() => act('pullFile', join(here, sel.name)), '已开始下载，进度在「后台任务」里')}
+            onClick={() => sel && run(() => act('pullFile', join(here, sel.name)), '已开始下载，进度在「任务」里')}
           >
+            <Icon name="download" size={14} />
             下载
           </button>
           <button className="btn sm danger" disabled={!running || !sel} onClick={() => void remove()}>
             删除
           </button>
-          <button className="btn sm ghost icon" title="刷新" disabled={!running || loading} onClick={() => void load()}>
-            ↻
+          <button className="icon-btn plain" title="刷新" disabled={!running || loading} onClick={() => void load()}>
+            <Icon name="refresh" size={14} />
           </button>
         </div>
       </div>
@@ -178,7 +183,7 @@ export function FilesPage({ path }: { path: string }) {
         <div className="card file-list">
           {here !== HOME && (
             <div className="file-row" onDoubleClick={() => open(here.replace(/\/[^/]+$/, '') || HOME)}>
-              <span className="icon">↰</span>
+              <span className="icon"><Icon name="back" size={14} /></span>
               <span className="grow">..</span>
             </div>
           )}
@@ -190,15 +195,15 @@ export function FilesPage({ path }: { path: string }) {
               onClick={() => setSelected(e.name)}
               onDoubleClick={() => e.file_type === 'dir' && open(join(here, e.name))}
             >
-              <span className="icon">{e.file_type === 'dir' ? '▸' : e.file_type === 'link' ? '↪' : '·'}</span>
+              <span className="icon"><Icon name={e.file_type === 'dir' ? 'folder' : e.file_type === 'link' ? 'external' : 'file'} size={15} /></span>
               <span className="grow name">{e.name}</span>
               <span className="tiny muted size">{e.file_type === 'dir' ? '' : formatBytes(e.size)}</span>
               <span className="tiny faint when">{when(e.mtime)}</span>
             </div>
           ))}
-          {listing.truncated && <div className="tiny faint" style={{ padding: 8 }}>只列出了前 {listing.truncated} 项。</div>}
+          {listing.truncated && <div className="tiny faint" style={{ padding: 10 }}>只列出了前 {listing.truncated} 项。</div>}
         </div>
       )}
-    </main>
+    </div>
   );
 }

@@ -1,13 +1,11 @@
 // 浏览器预览用的演示数据（不在 Electron 里加载）。IP、项目、节点名都是示例。
-// 用 ?demo=ok（自带核心）| cv（Clash Verge）| egress | node | busy | welcome | setup | stopped | shares（共享文件夹）| upgrade（VM 需要更新）切换场景；
+// 用 ?demo=ok（自带核心）| cv（Clash Verge）| down（代理断开）| busy | welcome | setup | stopped | shares | upgrade 切换场景；
 // 加 &theme=light 或 &theme=dark 指定外观。
 import { renderClashScript, gitUrlProblem, projectNameFromUrl } from '../core/parsers';
-import { reportMarkdown } from '../core/report';
-import type { CheckEvent, CheckRecord, CoreConnection, CoreStatus, FileItem, JobSummary, Snapshot } from '../core/types';
+import type { CheckEvent, CheckRecord, CoreStatus, FileItem, JobSummary, Snapshot } from '../core/types';
 import type { Bridge } from './api';
 
-const BASE = '203.0.113.7';
-const NEW = '198.51.100.9';
+const IP = '203.0.113.7';
 const MIN = 60_000;
 
 const TEMPLATE = `// Clash Verge Rev 订阅「扩展脚本」(Script)。
@@ -23,54 +21,16 @@ function checks(list: [string, string][], fail: string[] = []): CheckEvent[] {
   return list.map(([id, msg]) => ({ id, ok: !fail.includes(id), msg }));
 }
 
-const HOST: [string, string][] = [
+const PRE: [string, string][] = [
   ['host.macos_arm64', 'Apple Silicon Mac，原生 arm64'],
   ['lima.version', 'Lima 2.2.1（≥ 2.1.0）'],
-  ['lima.no_global_config', 'Lima 目录里没有全局覆盖配置'],
+];
+const CHECK: [string, string][] = [
   ['vm.running', 'VM 运行中'],
-  ['baseline.present', `出口基线 ${BASE}`],
-  ['listener.loopback_only', '专用入口只监听在回环地址（127.0.0.1）'],
-  ['lima.effective_config', 'VM 实际配置：无挂载、无额外网络'],
-  ['egress.host_matches_baseline', `Mac 专用入口出口 = 基线 ${BASE}`],
-];
-const QUICK: [string, string][] = [
-  ['vm.firewall_active', '防火墙服务运行中'],
-  ['vm.firewall_main_rules', '主防火墙规则已加载（不是锁定模式）'],
-  ['vm.tun_up', 'TUN 服务运行中且 sb-tun 存在'],
-  ['vm.egress_reachable', `VM（cc 用户，无代理变量）可经 TUN 出网：${BASE}`],
-  ['egress.vm_matches_baseline', `VM 出口 = 基线 ${BASE}`],
-];
-const FULL: [string, string][] = [
-  ...QUICK,
-  ['vm.nftables_masked', '通用 nftables.service 已屏蔽'],
-  ['vm.resolv_static', '/etc/resolv.conf 为静态文件且指向 172.31.255.2'],
-  ['vm.ipv6_off', 'IPv6 已关闭'],
-  ['vm.no_host_mounts', '没有宿主目录挂载'],
-  ['cc.no_priv_groups', 'cc 不在特权组'],
-  ['cc.no_sudo', 'cc 没有免密 sudo'],
-  ['cc.no_proxy_env', 'cc 环境中没有代理变量'],
-  ['vm.dns_doh', 'DNS 可解析（172.31.255.2 → DoH 经代理）'],
-  ['vm.anthropic_reachable', 'api.anthropic.com TLS 可达（HTTP 404）'],
-  ['bypass.cc_listener', 'cc 不能直连 Mac 专用入口 192.168.5.2:17897'],
-  ['bypass.root_listener', 'root 也不能直连专用入口（只放行 sing-box 用户）'],
-  ['bypass.mac_port_7897', 'cc 不能访问 Mac 回环其他端口 :7897（日常代理/控制器）'],
-  ['bypass.mac_port_7890', 'cc 不能访问 Mac 回环其他端口 :7890（日常代理/控制器）'],
-  ['bypass.mac_port_9097', 'cc 不能访问 Mac 回环其他端口 :9097（日常代理/控制器）'],
-  ['bypass.mac_port_9090', 'cc 不能访问 Mac 回环其他端口 :9090（日常代理/控制器）'],
-  ['bypass.lan', 'cc 不能访问局域网/私网地址（192.168.1.1:80）'],
-];
-const LEAK: [string, string][] = [
-  ['leak.precheck', '对照：TUN 正常时 https://1.1.1.1 可达'],
-  ['leak.capture_control', '抓包对照：同一次抓包里有 214 个经专用入口 :17897 的包（证明抓包在 eth0 上确实有效）'],
-  ['leak.capture_bypass', '抓包：物理网卡 eth0 上没有旁路流量（仅 17897 / SSH / DHCP）'],
-  ['leak.fw_persists', '停止 TUN 后防火墙仍在'],
-  ['leak.tun_down_ipv4', 'TUN 停止：cc 的 IPv4 直连（字面 IP，排除 DNS 因素）被阻断'],
-  ['leak.tun_down_ipv6', 'TUN 停止：cc 的 IPv6 直连被阻断'],
-  ['leak.tun_down_dns', 'TUN 停止：DNS 无法解析'],
-  ['leak.tun_down_udp_dns', 'TUN 停止：外部 UDP DNS 无法使用'],
-  ['leak.tun_down_root_direct', 'TUN 停止：root 直连也被阻断'],
-  ['leak.tun_down_root_listener', 'TUN 停止：root 无法经专用入口出网（仅 sing-box 用户放行）'],
-  ['leak.tun_restored', 'TUN 已恢复，出网正常'],
+  ['host.proxy', `代理入口 127.0.0.1:17897 通，出口 ${IP}`],
+  ['vm.firewall', '防火墙在'],
+  ['vm.tun', 'TUN 在'],
+  ['vm.proxy', `经代理出网，出口 ${IP}`],
 ];
 
 const NODES = [
@@ -82,25 +42,18 @@ const NODES = [
 
 function coreStatus(now: number): CoreStatus {
   return {
-    mihomo: { path: '/opt/homebrew/bin/mihomo', version: '1.19.33', versionOk: true, versionChanged: false },
+    mihomo: { path: '/opt/homebrew/bin/mihomo', version: '1.19.33', versionOk: true },
     service: { loaded: true, running: true, pid: 4242, lastExit: '(never exited)' },
     listenerOwned: true,
     portBusy: true,
-    iface: 'en0',
     node: NODES[0],
+    nodeMissing: false,
     nodes: NODES,
     subscription: { set: true, masked: 'https://sub.example.com/api/v1/client/subscribe?token=••••••••', lastUpdate: now - 3 * 3600_000, autoUpdate: true, viaClashVerge: false },
     latency: {},
     checkedAt: now,
   };
 }
-
-const CONNS: CoreConnection[] = [
-  { id: '1', host: '', destination: '160.79.104.10:443', inbound: 'ccvm-in', chains: ['示例节点 · 东京 01'], upload: 180_000, download: 2_400_000, start: '' },
-  { id: '2', host: '', destination: '104.16.24.34:443', inbound: 'ccvm-in', chains: ['示例节点 · 东京 01'], upload: 90_000, download: 8_600_000, start: '' },
-  { id: '3', host: '', destination: '140.82.112.4:443', inbound: 'ccvm-in', chains: ['示例节点 · 东京 01'], upload: 40_000, download: 1_200_000, start: '' },
-  { id: '4', host: '', destination: '1.1.1.1:443', inbound: 'ccvm-in', chains: ['示例节点 · 东京 01'], upload: 3_000, download: 9_000, start: '' },
-];
 
 function record(kind: CheckRecord['kind'], at: number, list: CheckEvent[], values: Record<string, string>, reason?: string): CheckRecord {
   const ok = list.every((c) => c.ok) && !reason;
@@ -109,24 +62,22 @@ function record(kind: CheckRecord['kind'], at: number, list: CheckEvent[], value
 
 function initial(scenario: string): Snapshot {
   const now = Date.now();
-  const values = { host_egress: BASE, vm_egress: BASE, baseline: BASE, mode: 'quick', listener_addrs: '127.0.0.1' };
-  const quick = record('quick', now - 2 * MIN, checks([...HOST, ...QUICK]), values);
-  const full = record('full', now - 60 * MIN, checks([...HOST, ...FULL]), { ...values, mode: 'full' });
-  const leak = record('leak', now - 90 * MIN, checks(LEAK), { capture_control: '214', capture_bypass: '0', capture_nic: 'eth0' });
+  const last = record('check', now - 2 * MIN, checks(CHECK), { host_egress: IP, vm_egress: IP });
   const cloneJob: JobSummary = {
     id: 'demo-clone', kind: 'clone', title: '克隆项目', args: ['clone', 'git@github.com:you/scripts.git', '--json'],
     state: 'running', startedAt: now - 40_000, percent: 42, step: undefined,
   };
   const snap: Snapshot = {
-    level: 'ok', headline: '受保护', detail: `出口 ${BASE}，和基线一致`,
-    egress: { host: BASE, vm: BASE, baseline: BASE },
+    level: 'ok', headline: '已连接', detail: `出口 ${IP}`,
+    egress: { host: IP, vm: IP },
     vm: { name: 'ccvm', status: 'Running', cpus: 4, memoryBytes: 6 * 1024 ** 3, diskBytes: 60 * 1024 ** 3, arch: 'aarch64' },
-    lastQuick: quick, lastFull: full, lastLeak: leak, lastCheckAt: quick.at, checking: false,
-    issues: [], newSessionsBlocked: false,
+    lastCheck: last, lastCheckAt: last.at, checking: false,
+    issues: [],
     jobs: [cloneJob],
     projects: [
       { name: 'my-api', branch: 'main', dirty: 3, ahead: 1, behind: 0, updated: Math.floor(now / 1000) - 3600, subject: '补 /health 单元测试', remote: 'git@github.com:you/my-api.git', claudeSessions: 1, claudeSince: Math.floor(now / 1000) - 12 * 60 },
       { name: 'web-app', branch: 'feature/login', dirty: 0, ahead: 0, behind: 2, updated: Math.floor(now / 1000) - 2 * 86400, subject: '登录页样式', remote: 'https://github.com/you/web-app.git', claudeSessions: 0, claudeSince: 0 },
+      { name: 'infra', branch: 'main', dirty: 0, ahead: 0, behind: 0, updated: Math.floor(now / 1000) - 5 * 86400, subject: 'terraform: 升级 provider', remote: 'https://github.com/you/infra.git', claudeSessions: 0, claudeSince: 0 },
     ],
     sessions: [
       { name: 'my-api-1', created: Math.floor(now / 1000) - 12 * 60, attached: 1, project: 'my-api', activity: Math.floor(now / 1000) - 20, command: 'claude' },
@@ -137,53 +88,31 @@ function initial(scenario: string): Snapshot {
     claude: { installed: true, version: '2.1.311 (Claude Code)', checkedAt: now - 10 * MIN },
     core: coreStatus(now),
     captions: [],
-    matrix: { vm_restart: now - 86400_000, claude: now - 3600_000 },
     settings: {
-      vmName: 'ccvm', limaHome: '~/.lima-ccvm', stateDir: '~/Library/Application Support/CCVM/state', checkIntervalMin: 10,
+      vmName: 'ccvm', limaHome: '~/.lima-ccvm', stateDir: '~/Library/Application Support/CCVM/state', checkIntervalMin: 3,
       showCapsule: true, terminalApp: 'Terminal', launchAtLogin: true, egressMode: 'builtin', nodeName: '示例节点 · 东京 01',
       claudeLoginConfirmed: true, welcomeDone: true, hooksEnabled: true, sharedFolders: [], sharesEnabled: false,
-      latencyTestUrl: 'https://www.gstatic.com/generate_204', theme: 'system', clashController: '',
+      latencyTestUrl: 'https://www.gstatic.com/generate_204', theme: 'system',
     },
     shares: { applied: [], pendingApply: false, needsRetry: false, problems: {} },
     vmPackages: { level: 2, target: 2, tmuxInstalled: true, needsUpgrade: false },
-    clashController: { address: '', secretSet: false },
-    paths: { kit: '/Applications/CCVM.app/Contents/Resources/kit', state: '~/Library/Application Support/CCVM/state', baselineFile: 'expected-ip.txt', jobs: 'jobs' },
+    paths: { kit: '/Applications/CCVM.app/Contents/Resources/kit', state: '~/Library/Application Support/CCVM/state', jobs: 'jobs' },
     kitVersion: '2.3.0', appVersion: '0.1.0',
   };
 
-  if (scenario === 'egress') {
-    const v = { ...values, host_egress: NEW, vm_egress: NEW };
-    const bad = checks([...HOST, ...QUICK], ['egress.host_matches_baseline', 'egress.vm_matches_baseline']).map((c) =>
-      c.id === 'egress.vm_matches_baseline' ? { ...c, msg: `VM 出口 ${NEW} ≠ 基线 ${BASE}` } : c.id === 'egress.host_matches_baseline' ? { ...c, msg: `Mac 专用入口出口 ${NEW} ≠ 基线 ${BASE}` } : c,
-    );
-    snap.lastQuick = record('quick', now - MIN, bad, v);
-    snap.lastCheckAt = snap.lastQuick.at;
-    snap.egress = { host: NEW, vm: NEW, baseline: BASE };
+  if (scenario === 'down') {
+    snap.lastCheck = record('check', now - MIN, checks(CHECK, ['host.proxy', 'vm.proxy']), { host_egress: '', vm_egress: '' });
+    snap.lastCheckAt = snap.lastCheck.at;
+    snap.egress = {};
     snap.level = 'error';
-    snap.headline = '出口变了';
-    snap.detail = `VM 现在走 ${NEW}，不是记住的 ${BASE}。核实之前，不会打开新的 Claude 会话。`;
-    snap.issues = [{ key: `egress_changed:${NEW}`, kind: 'egress_changed', title: '出口变了', detail: snap.detail, checkId: 'egress.vm_matches_baseline', data: { baseline: BASE, host: NEW, vm: NEW } }];
-    snap.newSessionsBlocked = true;
-    snap.captions = [{ id: 1, at: now, level: 'error', text: `出口变成了 ${NEW}，不是记住的 ${BASE}。正在跑的会话不受影响，新会话先不开。`, sticky: true, issueKey: snap.issues[0].key }];
+    snap.headline = '代理断开';
+    snap.detail = '127.0.0.1:17897 连不上代理，VM 已断网。代理恢复后自动连上。';
+    snap.issues = [{ key: 'proxy_down', kind: 'proxy_down', title: '代理断开', detail: snap.detail }];
+    snap.captions = [{ id: 1, at: now, level: 'error', text: `代理断开：${snap.detail}`, sticky: true, issueKey: 'proxy_down' }];
   }
   if (scenario === 'cv') {
-    snap.settings = { ...snap.settings, clashController: '127.0.0.1:9097' };
-    snap.clashController = { address: '127.0.0.1:9097', secretSet: true };
     snap.settings = { ...snap.settings, egressMode: 'clash-verge' };
     snap.core = undefined;
-  }
-  if (scenario === 'node') {
-    const core = coreStatus(now);
-    core.pending = { kind: 'changed', at: now - 2 * MIN, info: NODES[0] };
-    core.stopped = { reason: 'node_changed', at: now - 2 * MIN, detail: `选定节点「${NODES[0].name}」的地址、端口或密码变了` };
-    core.service = { loaded: false, running: false };
-    snap.core = core;
-    snap.level = 'error';
-    snap.headline = '选定节点变了';
-    snap.detail = `「${NODES[0].name}」的地址、端口或密码变了。VM 已断网，确认后才会用新的节点信息。`;
-    snap.issues = [{ key: 'node_changed:changed:1', kind: 'node_changed', title: '选定节点变了', detail: snap.detail, data: { node: NODES[0].name, kind: 'changed' } }];
-    snap.newSessionsBlocked = true;
-    snap.captions = [{ id: 1, at: now, level: 'error', text: `选定节点变了：${snap.detail}`, sticky: true, issueKey: snap.issues[0].key }];
   }
   if (scenario === 'shares') {
     const folders = ['/Volumes/Work/my-api', '/Volumes/Work/design assets', '/Volumes/Work/new-notes'];
@@ -197,47 +126,42 @@ function initial(scenario: string): Snapshot {
       needsRetry: false,
       problems: {},
     };
-    const fix = (list: CheckEvent[]) =>
-      list.map((c) => (c.id === 'lima.effective_config' ? { ...c, msg: 'VM 实际配置：无额外网络，挂载只有允许的 2 个共享文件夹' } : c));
-    snap.lastQuick = snap.lastQuick && { ...snap.lastQuick, checks: fix(snap.lastQuick.checks) };
-    snap.lastFull = snap.lastFull && { ...snap.lastFull, checks: fix(snap.lastFull.checks) };
   }
   if (scenario === 'upgrade') {
     snap.vmPackages = { level: 1, target: 2, tmuxInstalled: true, needsUpgrade: true };
   }
   if (scenario === 'busy') {
-    snap.jobs = [{ id: 'demo-leak', kind: 'leaktest', title: '断流测试', args: ['--json'], state: 'running', startedAt: now - 12_000 }, cloneJob];
+    snap.jobs = [{ id: 'demo-start', kind: 'vm-start', title: '启动 VM', args: ['start', '--json'], state: 'running', startedAt: now - 12_000 }, cloneJob];
     snap.level = 'busy';
-    snap.headline = '断流测试';
-    snap.detail = '后台任务进行中';
+    snap.headline = '启动 VM';
+    snap.detail = '';
   }
   if (scenario === 'stopped') {
     snap.vm = { ...snap.vm, status: 'Stopped' };
     snap.level = 'idle';
-    snap.headline = 'VM 没有运行';
-    snap.detail = '当前状态：Stopped';
+    snap.headline = 'VM 已停止';
+    snap.detail = '';
   }
   if (scenario === 'welcome') {
     snap.vm = { name: 'ccvm', status: 'Missing' };
     snap.level = 'idle';
     snap.headline = '还没部署';
-    snap.detail = '打开欢迎页，按 3 步完成部署';
-    snap.lastQuick = snap.lastFull = snap.lastLeak = undefined;
+    snap.detail = '打开欢迎页完成部署';
+    snap.lastCheck = undefined;
     snap.lastCheckAt = undefined;
     snap.egress = {};
     snap.projects = [];
     snap.jobs = [];
     snap.claude = {};
-    snap.matrix = {};
     snap.settings = { ...snap.settings, welcomeDone: false, claudeLoginConfirmed: false, nodeName: '' };
     snap.core = { ...coreStatus(now), node: undefined, nodes: [], service: { loaded: false, running: false }, listenerOwned: undefined, portBusy: false, subscription: { set: false, autoUpdate: true, viaClashVerge: false } };
   }
   if (scenario === 'setup') {
     snap.vm = { name: 'ccvm', status: 'Running' };
-    snap.jobs = [{ id: 'demo-setup', kind: 'setup', title: '准备 VM', args: ['--json'], state: 'running', startedAt: now - 95_000, step: '3/5 安装 VM 网络层（sing-box TUN + 防火墙 + cc 用户）', stepId: 'setup.install' }];
+    snap.jobs = [{ id: 'demo-setup', kind: 'setup', title: '准备 VM', args: ['--json'], state: 'running', startedAt: now - 95_000, step: '3/4 安装 VM 网络层（sing-box TUN + 防火墙 + cc 用户）', stepId: 'setup.install' }];
     snap.level = 'busy';
     snap.headline = '准备 VM';
-    snap.lastQuick = snap.lastFull = snap.lastLeak = undefined;
+    snap.lastCheck = undefined;
     snap.projects = [];
     snap.settings = { ...snap.settings, welcomeDone: false };
   }
@@ -269,7 +193,7 @@ export function createMockBridge(): Bridge {
     const id = `demo-${kind}-${Date.now()}`;
     update({ jobs: [{ id, kind, title, args: [], state: 'running', startedAt: Date.now() }, ...snap.jobs], level: 'busy', headline: title });
     setTimeout(() => {
-      update({ jobs: snap.jobs.map((j) => (j.id === id ? { ...j, state: 'done', finishedAt: Date.now() } : j)), level: snap.issues.length ? 'error' : 'ok', headline: snap.issues.length ? snap.headline : '受保护' });
+      update({ jobs: snap.jobs.map((j) => (j.id === id ? { ...j, state: 'done', finishedAt: Date.now() } : j)), level: snap.issues.length ? 'error' : 'ok', headline: snap.issues.length ? snap.headline : '已连接' });
       then?.();
     }, ms);
     return id;
@@ -294,15 +218,13 @@ export function createMockBridge(): Bridge {
     quickCheck: async () => {
       update({ checking: true });
       await sleep(900);
-      update({ checking: false, lastCheckAt: Date.now(), lastQuick: snap.lastQuick && { ...snap.lastQuick, at: Date.now() } });
+      update({ checking: false, lastCheckAt: Date.now(), lastCheck: snap.lastCheck && { ...snap.lastCheck, at: Date.now() } });
     },
-    fullCheck: () => job('check-full', '完整验收', 2500, () => caption('完整验收通过')),
-    leaktest: () => job('leaktest', '断流测试', 3000, () => caption('断流测试通过：经专用入口 214 个包 · 旁路 0 个')),
-    setup: () => job('setup', '准备 VM', 4000, () => update({ vm: { ...snap.vm, status: 'Running' }, egress: { host: BASE, vm: BASE, baseline: BASE } })),
-    vmStart: () => job('vm-start', '启动 VM', 1500, () => update({ vm: { ...snap.vm, status: 'Running' }, level: 'ok', headline: '受保护' })),
-    vmStop: () => job('vm-stop', '停止 VM', 1500, () => update({ vm: { ...snap.vm, status: 'Stopped' }, level: 'idle', headline: 'VM 没有运行' })),
+    setup: () => job('setup', '准备 VM', 4000, () => update({ vm: { ...snap.vm, status: 'Running' }, egress: { host: IP, vm: IP }, lastCheck: record('check', Date.now(), checks(CHECK), { host_egress: IP, vm_egress: IP }) })),
+    vmStart: () => job('vm-start', '启动 VM', 1500, () => update({ vm: { ...snap.vm, status: 'Running' }, level: 'ok', headline: '已连接' })),
+    vmStop: () => job('vm-stop', '停止 VM', 1500, () => update({ vm: { ...snap.vm, status: 'Stopped' }, level: 'idle', headline: 'VM 已停止' })),
     cancelJob: (id: string) => update({ jobs: snap.jobs.map((j) => (j.id === id ? { ...j, state: 'cancelled', reason: '已取消' } : j)) }),
-    jobLog: () => '==> 3/5 安装 VM 网络层（sing-box TUN + 防火墙 + cc 用户）\n[vm] 检查 VM → http://192.168.5.2:17897 链路\n[vm] 安装基础包（经专用入口）\nReading package lists... Done\n',
+    jobLog: () => '==> 3/4 安装 VM 网络层（sing-box TUN + 防火墙 + cc 用户）\n[vm] 检查 VM → http://192.168.5.2:17897 链路\n[vm] 安装基础包\nReading package lists... Done\n',
     refreshProjects: async () => update({ projectsAt: Date.now() }),
     clone: (url: string) => {
       const problem = gitUrlProblem(url);
@@ -316,35 +238,16 @@ export function createMockBridge(): Bridge {
     refreshClaude: async () => undefined,
     preflight: async () => {
       await sleep(400);
-      const ready = !!snap.settings.nodeName;
-      const list = ready
-        ? checks([HOST[0], HOST[1], HOST[2], HOST[5], ['egress.host_reachable', `经专用入口出网正常，出口 ${BASE}`]])
-        : checks([HOST[0], HOST[1], HOST[2], ['listener.loopback_only', '确认不了 :17897 的监听地址（netstat / lsof 都没有看到）。扩展脚本可能没有生效'], ['egress.host_reachable', '经 127.0.0.1:17897 访问外网失败']], ['listener.loopback_only', 'egress.host_reachable']);
-      const rec = record('preflight', Date.now(), list, { host_egress: ready ? BASE : '', lima_version: '2.2.1' });
+      const ready = !!snap.core?.node || !!snap.settings.nodeName;
+      const list = checks([...PRE, ['host.proxy', ready ? `代理入口通，出口 ${IP}` : '代理入口 127.0.0.1:17897 不通']], ready ? [] : ['host.proxy']);
+      const rec = record('preflight', Date.now(), list, { host_egress: ready ? IP : '', lima_version: '2.2.1' });
       update({ lastPreflight: rec });
       return rec;
     },
-    previewRebaseline: async () => {
-      await sleep(700);
-      return { script: 'rebaseline.sh', args: [], startedAt: 0, finishedAt: 0, exitCode: 0, ok: true, checks: [{ id: 'egress.host_matches_vm', ok: true, msg: `Mac 与 VM 出口一致：${NEW}` }], values: { old_baseline: BASE, host_egress: NEW, vm_egress: NEW }, items: [], steps: [], errors: [], logs: [], parseErrors: 0, stderrTail: '' };
-    },
-    acceptRebaseline: async (ip: string) => {
-      if (!window.confirm(`把出口基线改成 ${ip}？`)) return null;
-      await sleep(600);
-      snap = initial('ok');
-      snap.egress = { host: ip, vm: ip, baseline: ip };
-      snap.detail = `出口 ${ip}，和基线一致`;
-      emit();
-      caption(`基线已更新为 ${ip}`);
-      return { ok: true };
-    },
-    openTerminal: async () => {
-      if (snap.newSessionsBlocked) throw new Error(`现在不打开新会话：${snap.headline}`);
-      caption('已在终端里打开 cc（演示）');
-    },
+    openTerminal: async () => caption('已在终端里打开 cc（演示）'),
     openAdminShell: async () => caption('已打开管理员 shell（演示）'),
     updateSettings: async (patch: Partial<Snapshot['settings']>) => {
-      update({ settings: { ...snap.settings, ...patch, egressMode: 'clash-verge' } });
+      update({ settings: { ...snap.settings, ...patch, egressMode: snap.settings.egressMode } });
       return snap.settings;
     },
     chooseStateDir: async () => null,
@@ -352,14 +255,6 @@ export function createMockBridge(): Bridge {
     copyText: async (text: string) => {
       await navigator.clipboard?.writeText(text).catch(() => undefined);
       caption('已复制');
-    },
-    exportReport: async () => {
-      const blob = new Blob([reportMarkdown(snap, Date.now())], { type: 'text/markdown' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'CCVM-验收记录.md';
-      a.click();
-      return 'CCVM-验收记录.md';
     },
     openMain: async (route?: string) => {
       if (route) window.location.hash = route;
@@ -383,13 +278,10 @@ export function createMockBridge(): Bridge {
       return { changed: false };
     },
     selectNode: async (name: string) => {
-      const core = snap.core!;
-      if (core.node && core.node.name !== name && !window.confirm(`换到「${name}」？换节点等于换出口。`)) return null;
       await sleep(800);
       const node = NODES.find((n) => n.name === name)!;
-      const fresh = initial('ok');
-      update({ ...fresh, core: { ...coreStatus(Date.now()), node, nodes: NODES }, lastPreflight: record('preflight', Date.now(), checks([HOST[0], HOST[1], HOST[2], HOST[5], ['egress.host_reachable', `经专用入口出网正常，出口 ${BASE}`]]), { host_egress: BASE, lima_version: '2.2.1' }), settings: { ...snap.settings } });
-      caption(`出口核心改用「${name}」`);
+      update({ core: { ...coreStatus(Date.now()), node, nodes: NODES }, lastPreflight: record('preflight', Date.now(), checks([...PRE, ['host.proxy', `代理入口通，出口 ${IP}`]]), { host_egress: IP, lima_version: '2.2.1' }) });
+      caption(`已切换到「${name}」`);
       return node;
     },
     restartCore: async () => caption('核心已重启（演示）'),
@@ -401,22 +293,6 @@ export function createMockBridge(): Bridge {
     clearSubscription: async () => update({ core: { ...snap.core!, subscription: { set: false, autoUpdate: true, viaClashVerge: false }, nodes: [] } }),
     setCoreOptions: async (o: { autoUpdate?: boolean; viaClashVerge?: boolean }) =>
       update({ core: { ...snap.core!, subscription: { ...snap.core!.subscription, ...Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) } } }),
-    coreConnections: async () => CONNS,
-    setClashController: async (o: { address: string; secret?: string | null }) => {
-      const secretSet = o.secret === undefined ? snap.clashController.secretSet : !!o.secret;
-      update({ settings: { ...snap.settings, clashController: o.address }, clashController: { address: o.address, secretSet } });
-      return snap.settings;
-    },
-    testClashController: async () => ({ version: 'v1.19.15 (演示)' }),
-    clashConnections: async () => {
-      const node = snap.settings.nodeName || '示例节点 · 东京 01';
-      // 演示里故意放一条没走 CC-VM-FIXED 的连接，看标红的样子
-      const connections = [
-        ...CONNS.map((c) => ({ ...c, inbound: 'cc-vm-in', chains: [node, 'CC-VM-FIXED'] })),
-        { ...CONNS[0], id: 'bad', destination: '93.184.215.14:443', inbound: 'cc-vm-in', chains: ['DIRECT'] },
-      ];
-      return { connections, node, offPath: ['bad'] };
-    },
     latencyTest: async () => {
       await sleep(1200);
       const latency = { [NODES[0].name]: 86, [NODES[1].name]: 92, [NODES[2].name]: 121, [NODES[3].name]: null };
@@ -489,7 +365,7 @@ export function createMockBridge(): Bridge {
     vmUpgrade: () =>
       job('vm-upgrade', '更新 VM', 2500, () => {
         update({ vmPackages: { level: 2, target: 2, tmuxInstalled: true, needsUpgrade: false } });
-        caption('VM 已更新，完整验收通过');
+        caption('VM 已更新');
       }),
     cliStatus: async () => cli,
     installCli: async () => {
@@ -499,12 +375,6 @@ export function createMockBridge(): Bridge {
     setHooks: async (enabled: boolean) => {
       update({ settings: { ...snap.settings, hooksEnabled: enabled } });
       return snap.settings;
-    },
-    setMatrix: async (id: string, done: boolean) => {
-      const matrix = { ...snap.matrix };
-      if (done) matrix[id] = Date.now();
-      else delete matrix[id];
-      update({ matrix });
     },
   };
 
@@ -516,7 +386,6 @@ export function createMockBridge(): Bridge {
   const say = (id: string, text: string) => setTimeout(() => termData.forEach((cb) => cb(id, text)), 0);
   const term = {
     open: async (spec: { mode: 'new' | 'attach'; project?: string; session?: string }) => {
-      if (spec.mode === 'new' && snap.newSessionsBlocked) throw new Error(`现在不打开新会话：${snap.headline}`);
       const id = `demo${++termSeq}`;
       const project = spec.project ?? snap.sessions.find((s) => s.name === spec.session)?.project ?? 'my-api';
       const session = spec.session ?? `${project}-${snap.sessions.filter((s) => s.project === project).length + 1}`;

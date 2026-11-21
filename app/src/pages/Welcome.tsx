@@ -5,6 +5,7 @@ import { latestChecks } from '../../core/checks';
 import type { CheckRecord, JobSummary, Snapshot } from '../../core/types';
 import { act, usePoll, useApp } from '../api';
 import { Dot, Hint, levelOf } from '../components/common';
+import { Logo } from '../components/Icon';
 import { CoreSetup } from '../components/EgressCore';
 
 const INSTALL = 'curl -fsSL https://claude.ai/install.sh | bash -s stable';
@@ -34,23 +35,19 @@ export function WelcomePage({ step }: { step: number }) {
 function Head({ title, sub }: { title: string; sub?: string }) {
   return (
     <div className="welcome-head">
-      <div className="shield" />
+      <Logo size={72} />
       <h1>{title}</h1>
-      {sub && <p className="muted small">{sub}</p>}
+      {sub && <p>{sub}</p>}
     </div>
   );
 }
 
-function Detect({ rec, id, label, fallback }: { rec?: CheckRecord; id: string; label: string; fallback?: string }) {
+function Detect({ rec, id, label }: { rec?: CheckRecord; id: string; label: string }) {
   const c = rec ? latestChecks(rec.checks).get(id) : undefined;
   return (
     <div className="check-item">
       <Dot level={levelOf(c?.ok)} />
-      <div className="grow">
-        <div>{label}</div>
-        {c && !c.ok && <div className="why err-text">{c.msg}</div>}
-        {!c && fallback && <div className="why">{fallback}</div>}
-      </div>
+      <span className="grow">{label}</span>
     </div>
   );
 }
@@ -64,31 +61,22 @@ function StepEgress({ onLater }: { onLater: () => void }) {
   const ready = !!rec?.ok;
   usePoll(() => void act('preflight').catch(() => undefined), 4000, !ready);
   usePoll(() => void act('refreshCore').catch(() => undefined), 5000, mode === 'builtin' && !snap.core?.mihomo.path);
-  const vmExistsNoBaseline = snap.vm.status !== 'Missing' && snap.vm.status !== 'Unknown' && !snap.egress.baseline;
   const choose = (m: typeof mode) => {
     if (m !== mode) void run(() => act('setEgressMode', m));
   };
 
   return (
     <>
-      <Head title="欢迎使用 CCVM" sub="先给 VM 一个专用出口" />
+      <Head title="欢迎使用 CCVM" sub="给 Claude Code 一台走代理的 VM" />
       <div className="options">
-        <div className="card option">
-          <b>Lima</b>
-          <span className={`status ${levelOf(lima?.ok)}`}>
-            <Dot level={levelOf(lima?.ok)} />
-            {lima ? (lima.ok ? `已安装 ${rec?.values.lima_version ?? ''}` : '未安装或过旧：brew install lima') : '检测中'}
-          </span>
-        </div>
-        <div className={`card option ${mode === 'builtin' ? 'selected' : ''}`} style={{ cursor: 'pointer' }} onClick={() => choose('builtin')}>
+        <div className={`card option ${mode === 'builtin' ? 'selected' : ''}`} onClick={() => choose('builtin')}>
           <b>CCVM 自带核心</b>
           <span className="muted">贴订阅链接，选一个节点</span>
-          <span className={`chip ${mode === 'builtin' ? 'accent' : ''}`}>{mode === 'builtin' ? '当前方式 · 推荐' : '推荐'}</span>
+          <span className="chip accent">推荐</span>
         </div>
-        <div className={`card option ${mode === 'clash-verge' ? 'selected' : ''}`} style={{ cursor: 'pointer' }} onClick={() => choose('clash-verge')}>
+        <div className={`card option ${mode === 'clash-verge' ? 'selected' : ''}`} onClick={() => choose('clash-verge')}>
           <b>我的 Clash Verge</b>
-          <span className="muted">粘贴一次扩展脚本，加一个专用入口</span>
-          {mode === 'clash-verge' && <span className="chip accent">当前方式</span>}
+          <span className="muted">粘贴一次扩展脚本</span>
         </div>
       </div>
 
@@ -98,22 +86,14 @@ function StepEgress({ onLater }: { onLater: () => void }) {
         <div className="step">
           <span className={`step-num ${ready ? 'done' : ''}`}>✓</span>
           <div className="grow col" style={{ gap: 2 }}>
-            <div>做完后这里会自动检测到</div>
-            <Detect rec={rec} id="listener.loopback_only" label="专用入口只监听 127.0.0.1" fallback="还没看到 :17897 的监听" />
-            <Detect rec={rec} id="egress.host_reachable" label="经专用入口能出网" />
-            <Detect rec={rec} id="lima.no_global_config" label="Lima 目录里没有全局覆盖配置" />
+            <div className="check-item">
+              <Dot level={levelOf(lima?.ok)} />
+              <span className="grow">{lima ? (lima.ok ? `Lima ${rec?.values.lima_version ?? ''}` : 'Lima 未安装或过旧：brew install lima') : 'Lima'}</span>
+            </div>
+            <Detect rec={rec} id="host.proxy" label="代理入口 127.0.0.1:17897 能出网" />
           </div>
         </div>
       </div>
-
-      {vmExistsNoBaseline && (
-        <div className="callout warn row">
-          <span className="grow">发现已有 VM「{snap.vm.name}」，但这里还没有出口基线。用过命令行套件的话，选择它的 state 目录，App 和脚本就共用同一份基线。</span>
-          <button className="btn sm" onClick={() => run(() => act('chooseStateDir'))}>
-            选择 state 目录
-          </button>
-        </div>
-      )}
 
       <Foot snap={snap} onLater={onLater}>
         <button className="btn primary" disabled={!ready} onClick={() => go('/welcome/2')}>
@@ -151,7 +131,7 @@ function BuiltinSteps({ ready }: { ready: boolean }) {
         </div>
       </div>
       <div className="step">
-        <span className={`step-num ${core?.node && !core.pending ? 'done' : installed ? 'current' : ''}`}>2</span>
+        <span className={`step-num ${core?.node ? 'done' : installed ? 'current' : ''}`}>2</span>
         <div className="grow col">
           <div>贴订阅链接，选一个具体节点</div>
           {installed && <CoreSetup snap={snap} compact />}
@@ -183,7 +163,7 @@ function ClashVergeSteps({ ready }: { ready: boolean }) {
         <div className="grow col">
           <div className="row" style={{ gap: 6 }}>
             填一个具体节点的名称
-            <Hint text="和 Clash Verge 里显示的完全一致（保留 emoji 和空格）。策略组、自动选择不行，要一个具体节点；节点不在订阅里时专用入口拒绝连接，不会改走直连。" />
+            <Hint text="和 Clash Verge 里显示的完全一致（保留 emoji 和空格）。要一个具体节点，不能是策略组。" />
           </div>
           <div className="row">
             <input className="input grow" value={node} placeholder="例如：示例节点 · 东京 01" onChange={(e) => { setNode(e.target.value); setCopied(false); }} />
@@ -227,18 +207,17 @@ function Foot({ snap, onLater, children }: { snap: Snapshot; onLater?: () => voi
 
 // ---------------------------------------------------------------- 2. 准备 VM
 const SETUP_STEPS: [string, string][] = [
-  ['setup.listener', '确认专用入口'],
-  ['setup.vm', '创建 VM（不挂载任何 Mac 目录；首次要下载约 600 MB 的 Ubuntu 镜像）'],
-  ['setup.install', '安装防火墙和 sing-box，创建无 sudo 的 cc 用户'],
-  ['setup.baseline', '记录出口基线'],
-  ['setup.verify', '完整检查一遍，再做断流测试'],
+  ['setup.proxy', '确认代理入口'],
+  ['setup.vm', '创建 VM（首次要下载约 600 MB 的 Ubuntu 镜像）'],
+  ['setup.install', '安装 sing-box 和防火墙，创建 cc 用户'],
+  ['setup.verify', '检查网络'],
 ];
 
 function StepVm({ onLater }: { onLater: () => void }) {
   const { snap, go, run } = useApp();
   const job: JobSummary | undefined = snap.jobs.find((j) => j.kind === 'setup');
   const running = job?.state === 'running';
-  const vmReady = snap.vm.status === 'Running' && !!snap.egress.baseline && !!snap.lastQuick?.ok;
+  const vmReady = snap.vm.status === 'Running' && !!snap.lastCheck?.ok;
   const done = job?.state === 'done' || (vmReady && !running);
   const currentIdx = running ? Math.max(0, SETUP_STEPS.findIndex(([id]) => id === job?.stepId)) : -1;
   const failedIdx = job?.state === 'failed' ? Math.max(0, SETUP_STEPS.findIndex(([id]) => id === job.result?.steps.at(-1)?.id)) : -1;
@@ -275,16 +254,13 @@ function StepVm({ onLater }: { onLater: () => void }) {
             );
           })}
         </div>
-        {job?.state === 'failed' && <div className="callout err">{job.reason}（安装可以重跑：修好原因后点「重试」）</div>}
+        {job?.state === 'failed' && <div className="callout err">{job.reason}</div>}
         {job && (
           <a className="small" onClick={() => setShowLog(!showLog)}>
             {showLog ? '收起日志' : '查看日志'}
           </a>
         )}
         {showLog && <pre className="log">{log || '（还没有输出）'}</pre>}
-      </div>
-      <div className="callout warn">
-        准备期间，VM 自己的系统流量（apt 等）暂时走 Mac 当前网络，所以现在不要登录 Claude 或放入任何凭据；做完验收后 VM 才只走专用入口。
       </div>
       <Foot snap={snap} onLater={onLater}>
         <button className="btn" onClick={() => go('/welcome/1')}>
@@ -326,8 +302,8 @@ function StepClaude() {
         <div className="step">
           <span className="step-num done">1</span>
           <div className="grow row">
-            <span className="grow">打开 cc 用户的终端（先经检查，再进入）</span>
-            <button className="btn sm" disabled={snap.newSessionsBlocked} onClick={() => run(() => act('openTerminal'))}>
+            <span className="grow">打开 cc 用户的终端</span>
+            <button className="btn sm" disabled={snap.vm.status !== 'Running'} onClick={() => run(() => act('openTerminal'))}>
               打开终端
             </button>
           </div>
@@ -353,7 +329,7 @@ function StepClaude() {
         <div className="step">
           <span className={`step-num ${installed && confirmed ? 'done' : ''}`}>4</span>
           <div className="grow col" style={{ gap: 4 }}>
-            <span className={`status ${installed ? 'ok' : 'idle'}`}>
+            <span className={`state ${installed ? 'ok' : ''}`}>
               <Dot level={installed ? 'ok' : 'idle'} />
               {installed ? `已检测到 Claude Code ${snap.claude.version ?? ''}` : '安装后这里会自动检测到'}
             </span>

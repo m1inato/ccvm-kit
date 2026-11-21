@@ -1,9 +1,10 @@
-// 桌面胶囊：平时只占一条「受保护 · 出口 IP · 项目 · 计时」；做完或出问题时下面弹一句字幕。
+// 桌面胶囊：平时只占一条「已连接 · 出口 IP · 项目 · 计时」；做完或出问题时下面弹一句字幕。
 // 窗口跟着内容伸缩（主进程按这里量到的大小调整），透明的空白处不挡住下面的窗口。
 import { useLayoutEffect, useRef } from 'react';
 import { duration } from '../../core/status';
 import { act, getBridge, useApp } from '../api';
 import { Dot } from '../components/common';
+import { Icon } from '../components/Icon';
 
 function useReportSize() {
   const ref = useRef<HTMLDivElement>(null);
@@ -26,9 +27,7 @@ export function CapsulePage({ notice, onCloseNotice }: { notice?: string; onClos
   const { snap, now, run } = useApp();
   const ref = useReportSize();
   const active = snap.projects.filter((p) => p.claudeSessions > 0).sort((a, b) => a.claudeSince - b.claudeSince)[0];
-  const ip = snap.level === 'error'
-    ? snap.issues[0]?.kind === 'egress_changed' ? snap.egress.vm ?? snap.egress.host : undefined
-    : snap.egress.vm ?? snap.egress.baseline;
+  const ip = snap.level === 'ok' ? snap.egress.vm ?? snap.egress.host : undefined;
   const caption = snap.captions[snap.captions.length - 1];
   const open = (route?: string) => run(() => act('openMain', route));
   return (
@@ -56,8 +55,8 @@ export function CapsulePage({ notice, onCloseNotice }: { notice?: string; onClos
             <span className="muted">Claude 工作中 {duration(active.claudeSince, now)}</span>
           </>
         )}
-        <button className="btn sm ghost icon" title="打开主窗口" onClick={() => open()}>
-          ⤢
+        <button className="icon-btn plain" title="打开主窗口" onClick={() => open()}>
+          <Icon name="expand" size={14} />
         </button>
       </div>
       {caption && (
@@ -71,14 +70,9 @@ export function CapsulePage({ notice, onCloseNotice }: { notice?: string; onClos
             <span className="spacer" />
             {caption.level === 'error' ? (
               <>
-                <button className="btn sm" onClick={() => open('/')}>
-                  核实
+                <button className="btn sm" onClick={() => open('/network')}>
+                  查看
                 </button>
-                {snap.vm.status === 'Running' && (
-                  <button className="btn sm danger" onClick={() => run(() => act('vmStop'))}>
-                    停止 VM
-                  </button>
-                )}
               </>
             ) : (
               <>

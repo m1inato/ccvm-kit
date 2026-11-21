@@ -1,9 +1,10 @@
-// 项目页：左边是这个项目在 VM 里的 tmux 会话，中间是内嵌终端（按会话分标签），右边是可收起的「链路 / 连接 / 检查」。
-// 关标签只是断开，会话和里面的 Claude 继续在 VM 里跑；结束会话要单独确认。出错时不开新会话，但可以接回已有会话。
+// 项目页：左边是这个项目在 VM 里的 tmux 会话，右边是内嵌终端（按会话分标签）。
+// 关标签只是断开，会话和里面的 Claude 继续在 VM 里跑；结束会话要单独确认。
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { relativeTime } from '../../core/status';
 import { act, errorText, useApp } from '../api';
 import { Dot } from '../components/common';
+import { Icon } from '../components/Icon';
 import { detachTerm, getTerm, openTerm, renameTerm, subscribe, termsOf, type TermEntry } from '../terms';
 
 export function ProjectPage({ name }: { name: string }) {
@@ -16,7 +17,6 @@ export function ProjectPage({ name }: { name: string }) {
   useEffect(() => subscribe(rerender), []);
 
   const p = snap.projects.find((x) => x.name === name);
-  const blocked = snap.newSessionsBlocked;
   // 没有 tmux 时新会话开不起来（接回已有会话不受影响）
   const noTmux = snap.vmPackages.tmuxInstalled === false;
   const running = snap.vm.status === 'Running';
@@ -67,19 +67,21 @@ export function ProjectPage({ name }: { name: string }) {
 
   return (
     <div className="col grow" style={{ minHeight: 0, gap: 0 }}>
-      <div className="row" style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)' }}>
-        <button className="btn sm ghost" onClick={() => go('/')}>
-          ‹ 项目
+      <div className="project-head">
+        <button className="icon-btn" title="返回" onClick={() => go('/')}>
+          <Icon name="back" size={16} />
         </button>
-        <h2>{name}</h2>
+        <h1 className="ellipsis">{name}</h1>
         {p && <span className="chip mono">{p.branch}</span>}
-        {p && p.dirty > 0 && <span className="tiny muted">{p.dirty} 个未提交改动</span>}
+        {p && p.dirty > 0 && <span className="chip warn">{p.dirty} 个改动</span>}
         <span className="spacer" />
-        <button className="btn sm" disabled={blocked || noTmux || !running} onClick={() => run(() => act('openTerminal', name))} title="在外部终端里新建一个会话">
-          外部终端
-        </button>
-        <button className="btn sm" disabled={!running} onClick={() => go(`/files/${encodeURIComponent(`/home/cc/work/${name}`)}`)} >
+        <button className="btn" disabled={!running} onClick={() => go(`/files/${encodeURIComponent(`/home/cc/work/${name}`)}`)}>
+          <Icon name="folder" size={15} />
           文件
+        </button>
+        <button className="btn" disabled={noTmux || !running} onClick={() => run(() => act('openTerminal', name))}>
+          <Icon name="external" size={15} />
+          外部终端
         </button>
       </div>
       <div className="project-page">
@@ -92,7 +94,7 @@ export function ProjectPage({ name }: { name: string }) {
             const t = getTerm(s.name);
             const here = !!t && t.state === 'open';
             return (
-              <div key={s.name} className={`session ${current === s.name ? 'active' : ''}`} style={{ cursor: 'pointer' }} onClick={() => select(s.name)}>
+              <div key={s.name} className={`session ${current === s.name ? 'active' : ''}`} onClick={() => select(s.name)}>
                 <div className="row small">
                   <Dot level={s.command === 'claude' ? 'busy' : 'idle'} />
                   {renaming?.from === s.name ? (
@@ -131,7 +133,8 @@ export function ProjectPage({ name }: { name: string }) {
               </div>
             );
           })}
-          <button className="btn sm" disabled={blocked || noTmux || !running || busy} onClick={() => open('new')} title={blocked ? '核实之前不打开新会话' : ''}>
+          <button className="btn sm" disabled={noTmux || !running || busy} onClick={() => open('new')}>
+            <Icon name="plus" size={14} />
             新会话
           </button>
           {current && vmSessions.some((s) => s.name === current) && (
@@ -150,18 +153,13 @@ export function ProjectPage({ name }: { name: string }) {
           )}
         </aside>
 
-        <section className="center with-term">
+        <section className="col grow" style={{ minHeight: 0, gap: 10 }}>
           {snap.vmPackages.tmuxInstalled === false && (
-            <div className="notice">
-              <span className="grow">VM 里没有 tmux</span>
+            <div className="banner">
+              <span className="title grow">VM 里没有 tmux</span>
               <button className="btn sm" onClick={() => go('/')}>
                 更新 VM
               </button>
-            </div>
-          )}
-          {blocked && (
-            <div className="callout err">
-              {snap.headline}：新会话暂停，正在运行的会话可以接回。
             </div>
           )}
           <div className="term-wrap">
@@ -187,8 +185,8 @@ export function ProjectPage({ name }: { name: string }) {
                   </button>
                 );
               })}
-              <button className="term-tab" disabled={blocked || noTmux || !running || busy} onClick={() => open('new')} title="新会话">
-                ＋
+              <button className="term-tab" disabled={noTmux || !running || busy} onClick={() => open('new')} title="新会话">
+                <Icon name="plus" size={14} />
               </button>
             </div>
             <div className="term-area" ref={areaRef}>
@@ -197,10 +195,11 @@ export function ProjectPage({ name }: { name: string }) {
               ) : (
                 <div className="term-empty">
                   <div className="col" style={{ alignItems: 'center' }}>
-                    {busy && <span className="muted">正在检查并连接…</span>}
+                    {busy && <span className="muted">正在连接…</span>}
                     {error && <span className="small err-text">{error}</span>}
                     {!busy && (
-                      <button className="btn primary" disabled={blocked || noTmux || !running} onClick={() => open('new')}>
+                      <button className="btn lg primary" disabled={noTmux || !running} onClick={() => open('new')}>
+                        <Icon name="terminal" size={16} />
                         新会话
                       </button>
                     )}

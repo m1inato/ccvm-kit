@@ -1,6 +1,6 @@
 # CCVM
 
-在 Apple Silicon Mac 上给 Claude Code 一台独立的 VM：所有流量只从你选定的一个代理节点出去，代理断了就断网，不会改走直连。
+在 Apple Silicon Mac 上给 Claude Code 一台独立的 VM：所有流量走你选定的代理节点，代理断了 VM 就断网，不会改走直连。
 
 ```text
 VM 里的 cc 用户 → sing-box TUN → 192.168.5.2:17897
@@ -10,8 +10,8 @@ Mac 的 127.0.0.1:17897 → 你选定的节点
 
 - Ubuntu 24.04 ARM64，默认 4 vCPU / 6 GB 内存 / 60 GB 磁盘。
 - Claude 以没有 sudo 的 `cc` 用户运行。
-- TCP 走节点，DNS 经节点做 DoH；UDP、IPv6、局域网一律不通。
-- 出口 IP 和记下的基线不一致时，不开新会话。
+- TCP 走节点，DNS 经节点做 DoH；UDP、IPv6、局域网不通。
+- 代理通着就能用，出口 IP 变了也照常；代理断了，VM 断网，恢复后自动连上。
 - Mac 自己的代理设置不受影响。
 
 ## 需要
@@ -22,7 +22,7 @@ Mac 的 127.0.0.1:17897 → 你选定的节点
 
 ## 用桌面 App
 
-打开 CCVM，按欢迎页的三步走：接上出口、准备 VM、在 VM 里登录 Claude。之后在菜单栏和项目页里使用。
+打开 CCVM，按欢迎页的三步走：接上代理、准备 VM、在 VM 里登录 Claude。之后在主窗口和菜单栏里使用。
 
 构建 App 见 [app/README.md](app/README.md)。
 
@@ -53,7 +53,7 @@ curl --noproxy '' --proxy socks5h://127.0.0.1:17897 https://1.1.1.1/cdn-cgi/trac
 bash scripts/setup.sh
 ```
 
-创建 VM、装好防火墙和 TUN、记下出口基线，最后做一遍完整检查和断流测试。可以重复运行。
+创建 VM、装好防火墙和 TUN，最后检查一遍网络。可以重复运行。
 
 **3. 进入 VM，安装 Claude Code**
 
@@ -75,10 +75,8 @@ VM 里没有浏览器：把登录链接复制到 Mac 的浏览器里打开，再
 
 | 做什么 | 命令 |
 |---|---|
-| 检查后进入 VM | `bash scripts/enter.sh` |
-| 完整检查 | `bash scripts/check.sh` |
-| 断流测试（VM 会断网约 30 秒） | `bash scripts/leaktest.sh` |
-| 换节点后更新出口基线 | `bash scripts/rebaseline.sh` |
+| 进入 VM | `bash scripts/enter.sh` |
+| 看状态（代理通不通、出口 IP） | `bash scripts/check.sh` |
 | 更新已部署的 VM | `bash scripts/upgrade.sh` |
 | 启动 / 停止 VM | `bash scripts/vm.sh start` / `stop` |
 | 列出 VM 里的项目 | `bash scripts/workspace.sh list` |
@@ -111,7 +109,7 @@ cp config/local.env.example config/local.env
 
 ## 文档
 
-- [桌面端：工作方式与安全设计](docs/desktop-app.md)
+- [桌面端](docs/desktop-app.md)
 - [设计说明](docs/design.md)
 - [运维与排障](docs/operations.md)
 - [脚本事件格式](docs/events.md)

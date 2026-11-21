@@ -11,13 +11,16 @@ KIT = Path(__file__).resolve().parents[1]
 BASH_EXEC = os.environ.get("CCVM_TEST_BASH", "/bin/bash")
 US = "\x1f"
 
-SELFCHECK_OK = """PASS vm.firewall_active 防火墙服务运行中
-PASS vm.firewall_main_rules 主防火墙规则已加载（不是锁定模式）
-PASS vm.tun_up TUN 服务运行中且 sb-tun 存在
-PASS vm.tun_routes TUN 的策略路由在（ip rule 指向表 2022，表里有经 sb-tun 的路由）
-PASS vm.egress_reachable VM（cc 用户，无代理变量）可经 TUN 出网：203.0.113.7
-PASS egress.vm_matches_baseline VM 出口 = 基线 203.0.113.7
+SELFCHECK_OK = """PASS vm.firewall 防火墙在
+PASS vm.tun TUN 在
+PASS vm.proxy 经代理出网，出口 203.0.113.7
 EGRESS 203.0.113.7
+"""
+
+SELFCHECK_DOWN = """PASS vm.firewall 防火墙在
+PASS vm.tun TUN 在
+FAIL vm.proxy 代理不通，VM 现在断网
+EGRESS 
 """
 
 LIMACTL = r'''#!/bin/bash
@@ -48,7 +51,6 @@ case "$1" in
     body="$(cat)"
     case "$body" in
       *"VM 内以 cc 身份运行"*) out="$STUB_WORKSPACE_OUT"; rc="${STUB_WORKSPACE_RC:-0}" ;;
-      *"断流 / 抓包"*|*"会短暂停止 TUN"*) out="$STUB_LEAK_OUT"; rc="${STUB_LEAK_RC:-0}" ;;
       *"ccvm-shares.service"*) out="${STUB_SHARES_OUT-}"; rc="${STUB_SHARES_RC:-0}" ;;
       *"补装软件包（升级步骤）"*) out="${STUB_UPGRADE_OUT-}"; rc="${STUB_UPGRADE_RC:-0}" ;;
       *) out="$STUB_SELFCHECK_OUT"; rc="${STUB_SELFCHECK_RC:-0}" ;;
@@ -69,13 +71,12 @@ class ScriptHarness(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.state = self.root / "state"
         self.state.mkdir()
-        (self.state / "expected-ip.txt").write_text("203.0.113.7\n")
         self.bin = self.root / "bin"
         self.bin.mkdir()
         self.log = self.root / "calls.log"
         self.stub("uname", 'case "$1" in -s) echo Darwin;; -m) echo arm64;; *) exit 90;; esac')
-        self.stub("curl", "printf 'ip=%s\\n' \"${STUB_HOST_IP-203.0.113.7}\"")
-        self.stub("netstat", "printf 'tcp4 0 0 %s.17897 *.* LISTEN\\n' \"${STUB_LISTEN-127.0.0.1}\"")
+        # STUB_HOST_IP=down：代理入口不通
+        self.stub("curl", '[ "${STUB_HOST_IP-}" = down ] && exit 7\nprintf \'ip=%s\\n\' "${STUB_HOST_IP-203.0.113.7}"')
         (self.bin / "limactl").write_text(LIMACTL)
         (self.bin / "limactl").chmod(0o755)
         self.selfcheck = self.write("selfcheck.out", SELFCHECK_OK)
@@ -125,24 +126,20 @@ class ScriptHarness(unittest.TestCase):
 class EventTests(ScriptHarness):
     # ------------------------------------------------------------------ check.sh
     def test_check_json_happy_path(self):
-        result = self.run_script("check.sh", "--quick", "--json")
+        result = self.run_script("check.sh", "--json")
         events = self.events(result)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(events[0]["type"], "start")
         self.assertEqual(events[0]["script"], "check")
         self.assertEqual(events[-1], {"v": 1, "type": "end", "ok": True, "code": 0})
         checks = self.checks(events)
-        for cid in ["host.macos_arm64", "lima.version", "lima.no_global_config", "vm.running",
-                    "baseline.present", "listener.loopback_only", "lima.effective_config",
-                    "egress.host_matches_baseline", "vm.tun_up", "egress.vm_matches_baseline"]:
+        for cid in ["host.macos_arm64", "lima.version", "vm.running", "host.proxy", "vm.firewall", "vm.tun", "vm.proxy"]:
             self.assertIs(checks.get(cid), True, cid)
         values = self.values(events)
         self.assertEqual(values["host_egress"], "203.0.113.7")
         self.assertEqual(values["vm_egress"], "203.0.113.7")
-        self.assertEqual(values["baseline"], "203.0.113.7")
-        self.assertEqual(values["mode"], "quick")
-        self.assertIn("全部通过", result.stderr)  # human text moves to stderr in JSON mode
-        self.assertIn("sudo bash -s -- 203.0.113.7 quick", self.log.read_text())
+        self.assertIn("正常", result.stderr)  # human text moves to stderr in JSON mode
+        self.assertIn("sudo bash -s", self.log.read_text())
 
     def test_check_retries_incomplete_host_probe(self):
         self.stub("curl", """
@@ -153,30 +150,36 @@ if [ ! -f "$STUB_LOG.probe" ]; then
 fi
 printf 'ip=203.0.113.7\\n'
 """)
-        result = self.run_script("check.sh", "--quick", "--json")
+        result = self.run_script("check.sh", "--json")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.values(self.events(result))["host_egress"], "203.0.113.7")
 
-    def test_check_json_reports_egress_change(self):
-        self.selfcheck.write_text(SELFCHECK_OK.replace("PASS egress.vm_matches_baseline VM 出口 = 基线 203.0.113.7",
-                                                       "FAIL egress.vm_matches_baseline VM 出口 198.51.100.9 ≠ 基线 203.0.113.7")
-                                  .replace("EGRESS 203.0.113.7", "EGRESS 198.51.100.9"))
-        result = self.run_script("check.sh", "--json", STUB_HOST_IP="198.51.100.9", STUB_SELFCHECK_RC="1")
+    def test_a_different_exit_ip_still_passes(self):
+        self.selfcheck.write_text(SELFCHECK_OK.replace("203.0.113.7", "198.51.100.9"))
+        result = self.run_script("check.sh", "--json", STUB_HOST_IP="198.51.100.9")
+        events = self.events(result)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIs(events[-1]["ok"], True)
+        self.assertEqual(self.values(events)["vm_egress"], "198.51.100.9")
+
+    def test_proxy_down_fails_with_stable_ids(self):
+        self.selfcheck.write_text(SELFCHECK_DOWN)
+        result = self.run_script("check.sh", "--json", STUB_HOST_IP="down", STUB_SELFCHECK_RC="1")
         events = self.events(result)
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(events[-1]["type"], "end")
         self.assertIs(events[-1]["ok"], False)
         checks = self.checks(events)
-        self.assertIs(checks["egress.host_matches_baseline"], False)
-        self.assertIs(checks["egress.vm_matches_baseline"], False)
-        self.assertEqual(self.values(events)["vm_egress"], "198.51.100.9")
+        self.assertIs(checks["host.proxy"], False)
+        self.assertIs(checks["vm.proxy"], False)
+        self.assertIs(checks["vm.tun"], True)
+        self.assertEqual(self.values(events)["host_egress"], "")
         self.assertTrue(any(e["type"] == "error" for e in events))
 
-    def test_listener_on_lan_fails_with_stable_id(self):
-        result = self.run_script("check.sh", "--json", STUB_LISTEN="192.168.1.10")
-        events = self.events(result)
-        self.assertIs(self.checks(events)["listener.loopback_only"], False)
-        self.assertIs(events[-1]["ok"], False)
+    def test_check_does_not_look_at_listeners_or_lima_config(self):
+        (self.root / "lima/_config").mkdir(parents=True)
+        (self.root / "lima/_config/default.yaml").write_text("mounts: []\n")
+        result = self.run_script("check.sh", "--json", STUB_NETWORKS="1", STUB_MOUNTS="/Volumes/Work/x\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_stopped_vm_is_reported_not_crashed(self):
         result = self.run_script("check.sh", "--json", STUB_VM_STATUS="Stopped")
@@ -189,9 +192,9 @@ printf 'ip=203.0.113.7\\n'
         result = self.run_script("check.sh")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn('{"v":1', result.stdout + result.stderr)
-        self.assertIn("全部通过", result.stdout)
-        self.assertIn("VM 出口 = 基线 203.0.113.7", result.stdout)
-        self.assertNotIn("egress.vm_matches_baseline", result.stdout)
+        self.assertIn("正常", result.stdout)
+        self.assertIn("经代理出网，出口 203.0.113.7", result.stdout)
+        self.assertNotIn("vm.proxy", result.stdout)
 
     def test_unknown_argument_is_an_error_event(self):
         events = self.events(self.run_script("check.sh", "--bogus", "--json"))
@@ -218,62 +221,20 @@ printf 'ip=203.0.113.7\\n'
                 expected = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", sample.replace("\t", " "))
                 self.assertEqual(decoded, expected)
 
-    # ------------------------------------------------------------------ rebaseline.sh
-    def test_rebaseline_dry_run_never_writes(self):
-        result = self.run_script("rebaseline.sh", "--dry-run", "--json", STUB_HOST_IP="198.51.100.9",
-                                 STUB_SELFCHECK_OUT=str(self.write("sc", "EGRESS 198.51.100.9\n")))
-        events = self.events(result)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.values(events)["host_egress"], "198.51.100.9")
-        self.assertEqual((self.state / "expected-ip.txt").read_text(), "203.0.113.7\n")
-
-    def test_rebaseline_accept_requires_both_ends_to_match_the_confirmed_ip(self):
-        new_vm = str(self.write("sc", "EGRESS 198.51.100.9\n"))
-        # confirmed an IP that is no longer what both ends see
-        result = self.run_script("rebaseline.sh", "--accept", "198.51.100.10", "--json",
-                                 STUB_HOST_IP="198.51.100.9", STUB_SELFCHECK_OUT=new_vm)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIs(self.checks(self.events(result))["rebaseline.confirmed"], False)
-        self.assertEqual((self.state / "expected-ip.txt").read_text(), "203.0.113.7\n")
-        # Mac and VM disagree
-        result = self.run_script("rebaseline.sh", "--accept", "198.51.100.9", "--json",
-                                 STUB_HOST_IP="198.51.100.9",
-                                 STUB_SELFCHECK_OUT=str(self.write("sc2", "EGRESS 192.0.2.1\n")))
-        self.assertIs(self.checks(self.events(result))["egress.host_matches_vm"], False)
-        self.assertEqual((self.state / "expected-ip.txt").read_text(), "203.0.113.7\n")
-        # both match the confirmed value
-        result = self.run_script("rebaseline.sh", "--accept", "198.51.100.9", "--json",
-                                 STUB_HOST_IP="198.51.100.9", STUB_SELFCHECK_OUT=new_vm)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.state / "expected-ip.txt").read_text(), "198.51.100.9\n")
-
-    def test_rebaseline_rejects_non_ipv4_accept(self):
-        result = self.run_script("rebaseline.sh", "--accept", "1.2.3.4; rm -rf /", "--json")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertNotIn("shell", self.log.read_text() if self.log.exists() else "")
-
     # ------------------------------------------------------------------ preflight / vm
     def test_preflight_reports_every_item(self):
-        result = self.run_script("preflight.sh", "--json", STUB_LISTEN="0.0.0.0")
+        result = self.run_script("preflight.sh", "--json", STUB_HOST_IP="down", PATH=str(self.bin) + os.pathsep + "/usr/bin:/bin")
         events = self.events(result)
         checks = self.checks(events)
-        self.assertIs(checks["listener.loopback_only"], False)
-        self.assertIs(checks["egress.host_reachable"], True)   # still measured after the listener failure
-        self.assertIs(checks["lima.no_global_config"], True)
+        self.assertIs(checks["host.proxy"], False)
+        self.assertIs(checks["lima.version"], True)
         self.assertIs(events[-1]["ok"], False)
+        result = self.run_script("preflight.sh", "--json")
+        self.assertIs(self.checks(self.events(result))["host.proxy"], True)
 
-    def test_preflight_fails_on_lima_global_config(self):
-        (self.root / "lima/_config").mkdir(parents=True)
-        (self.root / "lima/_config/default.yaml").write_text("mounts: []\n")
-        events = self.events(self.run_script("preflight.sh", "--json"))
-        self.assertIs(self.checks(events)["lima.no_global_config"], False)
-        self.assertIs(events[-1]["ok"], False)
-
-    def test_vm_start_checks_effective_config(self):
+    def test_vm_start_starts_a_stopped_vm(self):
         result = self.run_script("vm.sh", "start", "--json", STUB_VM_STATUS="Stopped")
-        events = self.events(result)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIs(self.checks(events)["lima.effective_config"], True)
         self.assertIn("start --tty=false ccvm", self.log.read_text())
 
     def test_vm_start_refuses_missing_vm(self):
@@ -404,15 +365,19 @@ printf 'ip=203.0.113.7\\n'
         self.assertIn("sudo -iu cc tmux attach-session -t =my-api-1", calls)
         self.assertNotIn("bash -s", calls)   # 没有跑 VM 内检查
 
-    def test_enter_new_session_requires_passing_checks(self):
-        result = self.run_script("enter.sh", "--project", "my-api", "--session", "my-api-2")
+    def test_enter_does_not_gate_on_checks(self):
+        # 代理断了 VM 自己断网；进入 VM 不需要先通过检查
+        self.selfcheck.write_text(SELFCHECK_DOWN)
+        result = self.run_script("enter.sh", "--project", "my-api", "--session", "my-api-2", STUB_HOST_IP="down")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("tmux new-session -A -s my-api-2 -c /home/cc/work/my-api", self.log.read_text())
-        self.log.unlink()
-        self.selfcheck.write_text("FAIL vm.tun_up TUN 停了\nEGRESS \n")
-        result = self.run_script("enter.sh", "--project", "my-api", "--session", "my-api-3", STUB_SELFCHECK_RC="1")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertNotIn("new-session", self.log.read_text())
+        calls = self.log.read_text()
+        self.assertIn("tmux new-session -A -s my-api-2 -c /home/cc/work/my-api", calls)
+        self.assertNotIn("bash -s", calls)
+
+    def test_enter_starts_a_stopped_vm(self):
+        result = self.run_script("enter.sh", STUB_VM_STATUS="Stopped")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("start --tty=false ccvm", self.log.read_text())
 
     def test_enter_auto_session_picks_next_free_name(self):
         result = self.run_script("enter.sh", "--project", "my-api", "--session", "auto",
@@ -427,14 +392,6 @@ printf 'ip=203.0.113.7\\n'
         result = self.run_script("enter.sh", "--project", "my.api", "--session", "auto")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("tmux new-session -A -s my_api-1 -c /home/cc/work/my.api", self.log.read_text())
-
-    def test_enter_auto_session_still_requires_passing_checks(self):
-        self.selfcheck.write_text("FAIL vm.tun_up TUN 停了\nEGRESS \n")
-        result = self.run_script("enter.sh", "--project", "my-api", "--session", "auto",
-                                 STUB_SELFCHECK_RC="1", STUB_TMUX_SESSIONS="")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertNotIn("new-session", self.log.read_text())
-        self.assertNotIn("list-sessions", self.log.read_text())
 
     def test_enter_replaces_the_ghostty_terminal_type(self):
         # VM 里没有 xterm-ghostty 的 terminfo：tmux 会起不来
@@ -464,7 +421,7 @@ printf 'ip=203.0.113.7\\n'
         events = self.events(result)
         self.assertEqual(result.returncode, 73)
         steps = [e["id"] for e in events if e["type"] == "step"]
-        self.assertEqual(steps, ["setup.listener", "setup.vm"])
+        self.assertEqual(steps, ["setup.proxy", "setup.vm"])
         self.assertEqual(events[-1], {"v": 1, "type": "end", "ok": False, "code": 73})
 
 
@@ -505,7 +462,7 @@ class GuestProtocolTests(unittest.TestCase):
     def test_ids_are_stable_identifiers_and_documented(self):
         doc = (KIT / "docs/events.md").read_text()
         ids = self.script_ids()
-        self.assertGreater(len(ids), 40)
+        self.assertGreater(len(ids), 25)
         for name, token in sorted(ids):
             with self.subTest(script=name, id=token):
                 self.assertRegex(token, self.ID)
@@ -514,7 +471,7 @@ class GuestProtocolTests(unittest.TestCase):
                 self.assertTrue("`" + documented + "`" in doc, f"{name}: `{documented}` 没写进 docs/events.md")
 
     def test_guest_lines_have_ids(self):
-        for name in ["selfcheck.sh", "leaktest.sh"]:
+        for name in ["selfcheck.sh"]:
             text = (KIT / "guest" / name).read_text()
             for match in re.finditer(r'^\s*(?:check|refuse|pass|fail) "([^"]*)"', text, re.M):
                 self.assertRegex(match.group(1), self.ID, f"{name}: {match.group(0)}")

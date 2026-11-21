@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# 日常入口：必要时启动 VM → 快速检查（专用入口只监听回环、VM 配置无挂载、防火墙/TUN、出口=基线）→ 以 cc 用户进入。
+# 日常入口：必要时启动 VM，以 cc 用户进入。代理不通时 VM 自己断网，不影响进入。
 # 用法：
 #   enter.sh [--project 名称]                 进入后直接 cd 到 ~/work/<名称>
-#   enter.sh --project 名称 --session 会话名   检查后新建或接入 VM 里 cc 的 tmux 会话（在项目目录里）
+#   enter.sh --project 名称 --session 会话名   新建或接入 VM 里 cc 的 tmux 会话（在项目目录里）
 #   enter.sh --project 名称 --session auto     同上，会话名按 App 的规则自动取：<项目>-<第一个空闲序号>
-#   enter.sh --attach 会话名                   只接入已经存在的 tmux 会话，不做检查（不开新会话，所以出错时也允许回到正在跑的会话）
+#   enter.sh --attach 会话名                   只接入已经存在的 tmux 会话
 . "$(dirname "$0")/lib.sh"
 project="" session="" attach=""
 while [ $# -gt 0 ]; do
@@ -44,23 +44,6 @@ case "$(vm_status)" in
   *) info "启动 VM"; limactl start --tty=false "$VM" ;;
 esac
 
-force() {
-  [ "${CCVM_FORCE:-0}" = 1 ] || die "$1（排查用：bash scripts/check.sh；确需进入排障：CCVM_FORCE=1 bash scripts/enter.sh）"
-  warn "CCVM_FORCE=1：带着未通过的检查进入，不要在此状态下使用 Claude"
-  printf '\033]0;CCVM 排障模式 · 不受保护\007'
-}
-
-# 这两项失败时会直接 die；放在子 shell 里，CCVM_FORCE=1 时仍能进入排障
-( check_listener ) || force "专用入口监听检查未通过，拒绝进入"
-( check_effective_lima_config ) || force "VM 配置检查未通过，拒绝进入"
-
-exp="$(baseline)" || die "缺少基线 ${BASELINE}：先运行 setup.sh"
-if ! out="$(vm_script selfcheck.sh "$exp" quick)"; then
-  printf '%s\n' "$out" | grep '^FAIL' >&2 || true
-  force "快速检查未通过，拒绝进入"
-else
-  ok "出口 $(printf '%s\n' "$out" | awk '$1=="EGRESS"{print $2}') = 基线，进入 cc"
-fi
 # 和 App 的 nextSessionName 同一规则：项目名里 [A-Za-z0-9_-] 以外的字符换成 _，最多 56 个字符，后接 -序号
 auto_session_name() {
   local base taken n=1

@@ -1,6 +1,6 @@
 // 内嵌终端：每个标签是一个 node-pty，跑 enter.sh 进入 VM 里 cc 的 tmux 会话。
 // 关掉标签、窗口或 App 只是断开（tmux 会话和里面的 Claude 继续跑）；结束会话要单独确认。
-// 新会话经 enter.sh --session（先做检查）；接回已有会话经 --attach（不开新会话，出错时也允许）。
+// 新会话经 enter.sh --session；接回已有会话经 --attach。
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 启停 VM。每次都先做 require_mac（含 Lima 全局配置检查），启动后核对实际配置。
+# 启停 VM。
 # 用法：vm.sh start|stop|status [--json]
 . "$(dirname "$0")/lib.sh"
 parse_common_args "$@"
@@ -18,7 +18,6 @@ case "$1" in
   start)
     [ -n "$st" ] || fail_check vm.exists "VM 不存在：先完成部署（setup.sh）"
     if [ "$st" = Running ]; then ok "VM 已在运行"; else info "启动 VM"; limactl start --tty=false "$VM"; fi
-    check_effective_lima_config
     value vm_status "$(vm_status)"
     ;;
   stop)

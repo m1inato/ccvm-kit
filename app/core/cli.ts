@@ -13,10 +13,10 @@ export function ccvmScript(kitDir: string, settings: Pick<Settings, 'vmName' | '
   return [
     '#!/bin/bash',
     CCVM_MARK,
-    '# 在任意终端里进入 CCVM 的 VM（先经 enter.sh 检查，检查不过就拒绝）：',
+    '# 在任意终端里进入 CCVM 的 VM（VM 没运行时先启动）：',
     '#   ccvm              进入 cc 的普通 shell',
     '#   ccvm <项目>        在 ~/work/<项目> 新建一个 tmux 会话（App 的项目页能看到）',
-    '#   ccvm -a <会话>     接回已有的 tmux 会话（不做检查）',
+    '#   ccvm -a <会话>     接回已有的 tmux 会话',
     '#   其他以 - 开头的参数原样传给 enter.sh',
     UNSET,
     `export PATH=${shQuote(pathEnv)}`,
@@ -59,7 +59,7 @@ export function appleScriptString(value: string): string {
 /**
  * Ghostty（1.3.0 起支持 AppleScript）：新建一个 surface configuration，command 设成 ccvm 加参数，
  * 在家目录新开一个窗口。command 带参数时 Ghostty 用 /bin/sh -c 执行，所以先按 shell 加引号，再按 AppleScript 转义。
- * wait after command：检查不过被拒绝时，窗口留着让你看到原因。
+ * wait after command：进不去时（VM 不存在等），窗口留着让你看到原因。
  */
 export function ghosttyAppleScript(program: string, args: string[], home: string): string {
   const command = [program, ...args].map(shQuote).join(' ');

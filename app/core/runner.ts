@@ -19,9 +19,7 @@ export interface RunOptions extends VerdictOptions {
 
 export const SCRIPTS = new Set([
   'check.sh',
-  'leaktest.sh',
   'setup.sh',
-  'rebaseline.sh',
   'preflight.sh',
   'hooks.sh',
   'vm.sh',

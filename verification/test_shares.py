@@ -1,4 +1,4 @@
-"""Shared folders (share.sh, lib.sh helpers, selfcheck mounts_ok) and file transfer (files.sh), with stub commands."""
+"""Shared folders (share.sh, lib.sh helpers) and file transfer (files.sh), with stub commands."""
 import json
 import os
 from pathlib import Path
@@ -62,50 +62,6 @@ class ShareTests(ScriptHarness):
         result = self.lib("share_names")
         self.assertEqual(result.stdout.splitlines(), ["proj", "proj-2", "my_app_", "______", "proj-3", "share"])
 
-    # ------------------------------------------------------------------ check_effective_lima_config
-    def effective(self, mounts, networks="0"):
-        result = self.lib("check_effective_lima_config", STUB_MOUNTS="".join(m + "\n" for m in mounts),
-                          STUB_NETWORKS=networks)
-        return result.returncode, result.stdout + result.stderr
-
-    def test_effective_config_matches_mount_set_exactly(self):
-        a, b = self.home / "projects" / "app", self.home / "projects" / "b"
-        b.mkdir()
-        self.shares(a, b)
-        code, out = self.effective([str(b), str(a) + "/"])
-        self.assertEqual(code, 0, out)
-        self.assertIn("挂载只有允许的 2 个共享文件夹", out)
-        code, out = self.effective([str(a), str(b), "/Volumes/extra"])
-        self.assertNotEqual(code, 0)
-        self.assertIn("/Volumes/extra", out)
-        code, out = self.effective([str(a)])
-        self.assertNotEqual(code, 0)
-        self.assertIn(str(b), out)
-        code, out = self.effective([str(a), str(b)], networks="1")
-        self.assertNotEqual(code, 0)
-
-    def test_setup_tolerates_missing_but_not_extra_mounts(self):
-        a = self.home / "projects" / "app"
-        self.shares(a)
-        result = self.lib("check_effective_lima_config --allow-missing", STUB_MOUNTS="")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("无挂载、无额外网络", result.stdout)
-        result = self.lib("check_effective_lima_config --allow-missing", STUB_MOUNTS="/Volumes/extra\n")
-        self.assertNotEqual(result.returncode, 0)
-
-    def test_effective_config_without_shares(self):
-        code, out = self.effective([])
-        self.assertEqual(code, 0, out)
-        self.assertIn("无挂载、无额外网络", out)
-        self.assertNotEqual(self.effective(["/Volumes/x"])[0], 0)
-
-    def test_effective_config_rejects_a_hand_edited_shares_file(self):
-        self.shares(self.home / ".ssh")
-        code, out = self.effective([str(self.home / ".ssh")])
-        self.assertNotEqual(code, 0)
-        self.assertIn("不允许共享", out)
-
-    # ------------------------------------------------------------------ share.sh
     def test_share_status_lists_items_with_names_and_problems(self):
         self.shares(self.home / "projects" / "app", self.home / ".ssh")
         events = self.events(self.run_script("share.sh", "status", "--json", STUB_VM_STATUS="Stopped"))
@@ -151,7 +107,7 @@ class ShareTests(ScriptHarness):
             {"location": str(weird[2]), "mountPoint": "/mnt/ccvm-raw/it_s__q_", "writable": True},
         ])
         checks = self.checks(events)
-        for cid in ["share.paths", "share.lima_mounts", "lima.effective_config", "share.guest"]:
+        for cid in ["share.paths", "share.lima_mounts", "share.guest"]:
             self.assertIs(checks.get(cid), True, cid)
         calls = self.log.read_text().splitlines()
         order = [c.split()[0] for c in calls if c.split()[0] in ("stop", "edit", "start")]
@@ -213,33 +169,6 @@ class ShareTests(ScriptHarness):
         args = self.log.read_text().splitlines()
         self.assertIn("subtype=bindfs", args[args.index("-o") + 1].split(","))
         self.assertEqual(args[-2:], ["/mnt/ccvm-raw/project", "/home/cc/mac/project"])
-
-    # ------------------------------------------------------------------ selfcheck mounts_ok
-    def mounts_ok(self, findmnt_out, shares):
-        text = (KIT / "guest/selfcheck.sh").read_text()
-        func = re.search(r"^mounts_ok\(\) \{.*?^\}$", text, re.S | re.M).group(0)
-        self.stub("findmnt", "printf '%s' \"$STUB_FINDMNT\"")
-        return subprocess.run([BASH_EXEC, "-c", 'SHARES="$1"; ' + func + "\nmounts_ok", "t", shares],
-                              env=self.env | {"STUB_FINDMNT": findmnt_out}, text=True, capture_output=True, timeout=30)
-
-    def test_mounts_ok_allows_only_named_share_mounts(self):
-        none = self.mounts_ok("", "")
-        self.assertEqual(none.returncode, 0, none.stdout)
-        allowed = "/mnt/ccvm-raw/app virtiofs\n/home/cc/mac/app fuse.bindfs\n"
-        self.assertEqual(self.mounts_ok(allowed, "app,web").returncode, 0)   # web missing is not an isolation failure
-        extra = self.mounts_ok(allowed + "/home/cc/work virtiofs\n", "app")
-        self.assertNotEqual(extra.returncode, 0)
-        self.assertIn("/home/cc/work", extra.stdout)
-        for bad in ["/mnt/ccvm-raw/other virtiofs\n", "/home/cc/mac/app virtiofs\n", "/mnt/ccvm-raw/app/x virtiofs\n",
-                    "/mnt/x 9p\n", "/home/cc/mac/app fuse.sshfs\n"]:
-            with self.subTest(bad=bad):
-                self.assertNotEqual(self.mounts_ok(bad, "app").returncode, 0)
-
-    def test_full_check_passes_share_names_to_selfcheck(self):
-        app = self.home / "projects" / "app"
-        self.shares(app)
-        self.run_script("check.sh", "--json", STUB_MOUNTS=str(app) + "\n")
-        self.assertIn("sudo bash -s -- 203.0.113.7 full app", self.log.read_text())
 
 
 class FilesTests(ScriptHarness):

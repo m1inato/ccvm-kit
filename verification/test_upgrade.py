@@ -10,7 +10,7 @@ def lib_level():
 
 
 class UpgradeTests(ScriptHarness):
-    def test_upgrade_runs_guest_steps_then_full_check(self):
+    def test_upgrade_runs_guest_steps_then_check(self):
         out = self.write("up", "PASS vm.upgrade 已补装到级别 1\nVALUE vm_level 1\n")
         result = self.run_script("upgrade.sh", "--json", STUB_UPGRADE_OUT=str(out))
         events = self.events(result)
@@ -20,14 +20,13 @@ class UpgradeTests(ScriptHarness):
         self.assertEqual([e["id"] for e in events if e["type"] == "step"], ["upgrade.packages", "upgrade.verify"])
         checks = self.checks(events)
         self.assertIs(checks["vm.upgrade"], True)
-        self.assertIs(checks["vm.tun_up"], True)   # 完整验收的结论并在同一个流里
+        self.assertIs(checks["vm.proxy"], True)   # 状态检查的结论并在同一个流里
         values = self.values(events)
         self.assertEqual(values["vm_level"], "1")
         self.assertEqual(values["vm_level_target"], str(lib_level()))
-        self.assertEqual(values["mode"], "full")
         calls = self.log.read_text()
         self.assertIn("sudo bash -s -- %d" % lib_level(), calls)
-        self.assertIn("203.0.113.7 full", calls)
+        self.assertEqual(calls.count("sudo bash -s"), 2)   # 升级步骤 + 状态检查
 
     def test_failed_upgrade_stops_before_the_check(self):
         out = self.write("up", "FAIL vm.upgrade 第 1 步没有完成（停在级别 0），可以重试\nVALUE vm_level 0\n")
@@ -36,7 +35,7 @@ class UpgradeTests(ScriptHarness):
         self.assertNotEqual(result.returncode, 0)
         self.assertIs(self.checks(events)["vm.upgrade"], False)
         self.assertIs(events[-1]["ok"], False)
-        self.assertNotIn("full", self.log.read_text())
+        self.assertEqual(self.log.read_text().count("sudo bash -s"), 1)   # 没有接着做检查
 
     def test_upgrade_needs_a_running_vm(self):
         events = self.events(self.run_script("upgrade.sh", "--json", STUB_VM_STATUS="Stopped"))
@@ -142,18 +141,19 @@ class TunRouteFixTests(ScriptHarness):
         self.assertEqual(self.watchdog(), "")                                   # 正常
         self.assertIn("restart ccvm-tun.service", self.watchdog(rules=False))   # ip rule 没了
         self.assertIn("restart ccvm-tun.service", self.watchdog(routes=False))  # 表 2022 空了
-        self.assertEqual(self.watchdog(active=False, rules=False), "")          # 断流测试停了 TUN：不管
+        self.assertEqual(self.watchdog(active=False, rules=False), "")          # TUN 停着：不管
         uptime_us = int(float(open("/proc/uptime").read().split()[0]) * 1_000_000)
         self.assertEqual(self.watchdog(rules=False, since_us=uptime_us), "")    # 刚启动：sing-box 还在建路由
 
     def test_selfcheck_reports_missing_policy_routes(self):
         text = (KIT / "guest/selfcheck.sh").read_text()
-        func = re.search(r"^tun_routes_ok\(\) \{.*\}$", text, re.M).group(0)
+        func = re.search(r"^tun_ok\(\) \{.*?^\}$", text, re.S | re.M).group(0)
+        self.stub("systemctl", "exit 0")
         self.stub("ip", 'case "$1 $2" in\n'
                   '  "rule show") [ "$STUB_RULES" = 1 ] && echo "9001: from all lookup 2022 suppress_prefixlength 0" ;;\n'
                   '  "route show") echo "0.0.0.0/1 via 172.31.255.2 dev sb-tun table 2022" ;;\n'
                   'esac; exit 0')
         for rules, ok in [("1", 0), ("0", 1)]:
-            r = subprocess.run([BASH_EXEC, "-c", func + "\ntun_routes_ok"], env=self.env | {"STUB_RULES": rules},
+            r = subprocess.run([BASH_EXEC, "-c", func + "\ntun_ok"], env=self.env | {"STUB_RULES": rules},
                                text=True, capture_output=True, timeout=30)
             self.assertEqual(r.returncode, ok, rules)

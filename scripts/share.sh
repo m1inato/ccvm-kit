@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # 共享文件夹（读写）：Mac 上用户选定的具体文件夹，经 Lima 的 virtiofs 挂进 VM，再用 bindfs 映射给 cc。
-# 这是一次有意的设计降级，见 docs/desktop-app.md「设计降级：共享文件夹（读写）」。
 # 唯一来源是 $STATE/shares.txt（一行一个 Mac 绝对路径）；App 应用设置时写它，命令行用户可以手动编辑。
 # 用法：share.sh status|apply [--json]
 #   status  列出共享（名字、VM 里的位置）并逐个检查路径；VM 在运行时再到 VM 里核对 cc 看到的目录挂没挂上（只读）
-#   apply   检查路径 → 停 VM → limactl edit 写挂载 → 启动并核对实际配置 → 在 VM 里设置 bindfs 映射
+#   apply   检查路径 → 停 VM → limactl edit 写挂载 → 启动 → 在 VM 里设置 bindfs 映射
 . "$(dirname "$0")/lib.sh"
 parse_common_args "$@"
 set -- "${REST[@]+"${REST[@]}"}"
@@ -71,9 +70,8 @@ expr="$expr]"
 limactl edit "$VM" --set "$expr" || fail_check share.lima_mounts "limactl edit 没有成功：Lima 实例配置没有改动"
 pass share.lima_mounts "Lima 实例配置已写入 $count 个读写挂载"
 
-step share.start "启动 VM 并核对实际配置"
+step share.start "启动 VM"
 limactl start --tty=false "$VM"
-check_effective_lima_config
 
 step share.guest "在 VM 里设置 /home/cc/mac"
 rc=0

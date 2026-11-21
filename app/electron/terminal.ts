@@ -20,7 +20,7 @@ export function ccCommandFile(ccvmPath: string, project?: string): string {
   const args = ccvmArgs(project);
   return [
     '#!/bin/bash',
-    '# 由 CCVM 生成：经 ccvm 入口先检查、再以 cc 身份进入 VM。可以删除，下次打开会重新生成。',
+    '# 由 CCVM 生成：经 ccvm 入口以 cc 身份进入 VM。可以删除，下次打开会重新生成。',
     `printf '\\033]0;%s\\007' ${shQuote(`CCVM · cc${project ? ` · ${project}` : ''}`)}`,
     `exec /bin/bash ${[ccvmPath, ...args].map(shQuote).join(' ')}`,
     '',

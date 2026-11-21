@@ -1,10 +1,9 @@
 // 后台任务：每个任务是一次脚本运行；App 退出后继续跑，重新打开时接回。完整日志可以随时看。
 import { useEffect, useState } from 'react';
-import { checkLabel } from '../../core/report';
 import { relativeTime } from '../../core/status';
 import type { JobSummary } from '../../core/types';
 import { act, useApp } from '../api';
-import { Dot } from '../components/common';
+import { Dot, PageTitle } from '../components/common';
 
 const STATE: Record<JobSummary['state'], [string, 'busy' | 'ok' | 'error' | 'idle']> = {
   running: ['进行中', 'busy'],
@@ -16,17 +15,15 @@ const STATE: Record<JobSummary['state'], [string, 'busy' | 'ok' | 'error' | 'idl
 export function JobsPage({ focus }: { focus?: string }) {
   const { snap } = useApp();
   return (
-    <main className="main">
-      <div className="page-head">
-        <h1 className="grow">后台任务</h1>
-      </div>
-      <div className="col">
+    <div className="main-scroll narrow">
+      <PageTitle title="任务" />
+      <div className="col" style={{ gap: 12 }}>
         {snap.jobs.length === 0 && <div className="empty">没有后台任务</div>}
         {snap.jobs.map((j) => (
           <JobCard key={j.id} job={j} open={j.id === focus} />
         ))}
       </div>
-    </main>
+    </div>
   );
 }
 
@@ -50,7 +47,7 @@ function JobCard({ job, open: initiallyOpen }: { job: JobSummary; open: boolean 
         <Dot level={level} />
         <b>{job.title}</b>
         <span className="muted small">{label}</span>
-        <span className="tiny faint">{relativeTime(job.startedAt, now)}开始</span>
+        <span className="small faint">{relativeTime(job.startedAt, now)}开始</span>
         <span className="spacer" />
         {job.state === 'running' && (
           <button className="btn sm" onClick={() => run(() => act('cancelJob', job.id))}>
@@ -67,7 +64,7 @@ function JobCard({ job, open: initiallyOpen }: { job: JobSummary; open: boolean 
         <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>
           {failed.map((c, i) => (
             <li key={`${c.id}-${i}`}>
-              <span className="err-text">{checkLabel(c.id)}</span> <span className="muted">— {c.msg}</span>
+              <span className="err-text">{c.msg}</span>
             </li>
           ))}
         </ul>

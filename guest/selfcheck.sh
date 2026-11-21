@@ -1,81 +1,34 @@
 #!/usr/bin/env bash
-# VM 内以 root 运行（Mac 端经 stdin 传入：limactl shell ccvm sudo bash -s -- <基线IP> [quick|full] [允许的共享名,逗号分隔]）。
-# 只读检查；输出「PASS|FAIL <稳定 id> <说明>」行，最后一行 "EGRESS <ip>"，有 FAIL 时退出码 1。
-# id 是 App 与文档引用的接口（docs/events.md），改说明可以，改 id 要同步。
+# VM 内以 root 运行（Mac 端经 stdin 传入：limactl shell ccvm sudo bash -s）。
+# 只读状态检查：防火墙、TUN、经代理能不能出网。
+# 输出「PASS|FAIL <id> <说明>」行，最后一行 "EGRESS <ip>"；有 FAIL 时退出码 1。id 见 docs/events.md。
 set -uo pipefail
 
-EXPECTED="${1:-}"
-MODE="${2:-full}"
-SHARES="${3:-}"
 TRACE_URL="https://1.1.1.1/cdn-cgi/trace"
 fails=0
 pass() { local id="$1"; shift; printf 'PASS %s %s\n' "$id" "$*"; }
 fail() { local id="$1"; shift; printf 'FAIL %s %s\n' "$id" "$*"; fails=$((fails + 1)); }
-check() { local id="$1" msg="$2"; shift 2; if "$@" >/dev/null 2>&1; then pass "$id" "$msg"; else fail "$id" "$msg"; fi; }
-refuse() { local id="$1" msg="$2"; shift 2; if "$@" >/dev/null 2>&1; then fail "$id" "$msg"; else pass "$id" "$msg"; fi; }
 as_cc() { runuser -u cc -- env -i HOME=/home/cc USER=cc PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 "$@"; }
-tcp_open() { timeout 5 bash -c 'exec 3<>"/dev/tcp/$0/$1"' "$1" "$2"; }
 
-# 宿主目录挂载只允许 /mnt/ccvm-raw/<名字>（virtiofs）和 /home/cc/mac/<名字>（fuse.bindfs），名字必须在 $SHARES 里。
-# 其他任何一个都算失败并列出来。允许的挂载缺了不算失败：那是共享功能的问题（share.sh / shares.sh verify 报告），不是隔离问题。
-mounts_ok() {
-  local target fstype name bad=""
-  command -v findmnt >/dev/null 2>&1 || { echo "findmnt 不可用，无法确认"; return 1; }
-  while read -r target fstype; do
-    [ -n "$target" ] || continue
-    name=""
-    case "$fstype:$target" in
-      virtiofs:/mnt/ccvm-raw/*) name="${target#/mnt/ccvm-raw/}" ;;
-      fuse.bindfs:/home/cc/mac/*) name="${target#/home/cc/mac/}" ;;
-    esac
-    if [ -n "$name" ] && [[ "$name" =~ ^[A-Za-z0-9._-]{1,64}$ ]] && [ "$name" != . ] && [ "$name" != .. ] && [[ ",$SHARES," == *",$name,"* ]]; then
-      continue
-    fi
-    bad+="${target}（${fstype}） "
-  done < <(findmnt -rn -o TARGET,FSTYPE -t virtiofs,9p,fuse.sshfs,fuse.bindfs)
-  [ -z "$bad" ] && return 0
-  printf '%s\n' "$bad"
-  return 1
+firewall_ok() {
+  systemctl is-active --quiet ccvm-firewall.service || return 1
+  local r; r="$(nft list chain inet ccvm output 2>/dev/null)" || return 1
+  [[ "$r" == *"dport 17897"* ]]
+}
+tun_ok() {
+  systemctl is-active --quiet ccvm-tun.service && ip link show sb-tun >/dev/null 2>&1 \
+    && ip rule show 2>/dev/null | grep -q 'lookup 2022' && [ -n "$(ip route show table 2022 2>/dev/null)" ]
 }
 
-check vm.firewall_active "防火墙服务运行中" systemctl is-active --quiet ccvm-firewall.service
-main_rules_loaded() { local r; r="$(nft list chain inet ccvm output 2>/dev/null)" || return 1; [[ "$r" == *"dport 17897"* ]]; }
-check vm.firewall_main_rules "主防火墙规则已加载（不是锁定模式）" main_rules_loaded
-check vm.tun_up "TUN 服务运行中且 sb-tun 存在" bash -c 'systemctl is-active --quiet ccvm-tun.service && ip link show sb-tun'
-# TUN 进程在、策略路由却没了（例如系统更新重启了 networkd）：流量进不了 TUN，VM 断网。单独报出来，原因才看得清
-tun_routes_ok() { ip rule show 2>/dev/null | grep -q 'lookup 2022' && [ -n "$(ip route show table 2022 2>/dev/null)" ]; }
-check vm.tun_routes "TUN 的策略路由在（ip rule 指向表 2022，表里有经 sb-tun 的路由）" tun_routes_ok
+if firewall_ok; then pass vm.firewall "防火墙在"; else fail vm.firewall "防火墙没有加载：journalctl -u ccvm-firewall"; fi
+if tun_ok; then pass vm.tun "TUN 在"; else fail vm.tun "TUN 没有运行：journalctl -u ccvm-tun"; fi
 
-egress="$(as_cc curl -fsS --max-time 25 "$TRACE_URL" 2>/dev/null | awk -F= '$1=="ip"{print $2}')"
-if [ -n "$egress" ]; then pass vm.egress_reachable "VM（cc 用户，无代理变量）可经 TUN 出网：$egress"; else fail vm.egress_reachable "VM 经 TUN 出网失败"; fi
-if [ -n "$EXPECTED" ]; then
-  if [ "$egress" = "$EXPECTED" ]; then pass egress.vm_matches_baseline "VM 出口 = 基线 $EXPECTED"; else fail egress.vm_matches_baseline "VM 出口 ${egress:-无} ≠ 基线 $EXPECTED"; fi
-fi
+egress=""
+for t in 10 15; do
+  egress="$(as_cc curl -fsS --max-time "$t" "$TRACE_URL" 2>/dev/null | awk -F= '$1=="ip"{print $2}')"
+  [ -n "$egress" ] && break
+done
+if [ -n "$egress" ]; then pass vm.proxy "经代理出网，出口 $egress"; else fail vm.proxy "代理不通，VM 现在断网"; fi
 
-if [ "$MODE" != quick ]; then
-  check vm.nftables_masked "通用 nftables.service 已屏蔽" bash -c '[ "$(systemctl is-enabled nftables.service 2>/dev/null)" = masked ]'
-  check vm.resolv_static "/etc/resolv.conf 为静态文件且指向 172.31.255.2" bash -c '[ ! -L /etc/resolv.conf ] && [ "$(head -n1 /etc/resolv.conf)" = "nameserver 172.31.255.2" ]'
-  check vm.ipv6_off "IPv6 已关闭" bash -c '[ "$(sysctl -n net.ipv6.conf.all.disable_ipv6)" = 1 ]'
-  if bad_mounts="$(mounts_ok)"; then
-    pass vm.no_host_mounts "没有未经允许的宿主目录挂载${SHARES:+（允许的共享：$SHARES）}"
-  else
-    fail vm.no_host_mounts "有未经允许的宿主目录挂载：$bad_mounts"
-  fi
-  refuse cc.no_priv_groups "cc 不在特权组" bash -c "id -nG cc | grep -Eqw 'sudo|admin|adm|lxd|docker'"
-  refuse cc.no_sudo "cc 没有免密 sudo" as_cc sudo -n true
-  check cc.no_proxy_env "cc 环境中没有代理变量" bash -c "! runuser -l cc -c env | grep -Eiq '^(https?|all|no)_proxy=.'"
-  check vm.dns_doh "DNS 可解析（172.31.255.2 → DoH 经代理）" as_cc getent ahostsv4 api.anthropic.com
-  code="$(as_cc curl -sS -o /dev/null -w '%{http_code}' --max-time 25 https://api.anthropic.com/ 2>/dev/null || true)"
-  if [[ "$code" =~ ^[1-5][0-9][0-9]$ ]]; then pass vm.anthropic_reachable "api.anthropic.com TLS 可达（HTTP ${code}）"; else fail vm.anthropic_reachable "api.anthropic.com 不可达"; fi
-
-  # 绕过尝试（TUN 正常时也必须失败）
-  refuse bypass.cc_listener "cc 不能直连 Mac 专用入口 192.168.5.2:17897" as_cc bash -c 'timeout 5 bash -c "exec 3<>/dev/tcp/192.168.5.2/17897"'
-  refuse bypass.root_listener "root 也不能直连专用入口（只放行 sing-box 用户）" tcp_open 192.168.5.2 17897
-  for port in 7897 7890 9097 9090; do
-    refuse "bypass.mac_port_${port}" "cc 不能访问 Mac 回环其他端口 :${port}（日常代理/控制器）" as_cc bash -c "timeout 5 bash -c 'exec 3<>/dev/tcp/192.168.5.2/$port'"
-  done
-  refuse bypass.lan "cc 不能访问局域网/私网地址（192.168.1.1:80）" as_cc bash -c 'timeout 5 bash -c "exec 3<>/dev/tcp/192.168.1.1/80"'
-fi
-
-printf 'EGRESS %s\n' "${egress:-}"
+printf 'EGRESS %s\n' "$egress"
 [ "$fails" -eq 0 ]

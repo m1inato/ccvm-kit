@@ -3,19 +3,16 @@
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
-import { latestChecks } from './events';
 import { limaEnv, parseLoginPath, scriptEnv, validateSettingsPaths } from './env';
 import { JobStore } from './jobs';
-import type { CoreManager, SecretStore } from './egress';
-import { controllerAddressProblem, readVergeConnections, vergeGet, type VergeConnections } from './clashVerge';
-import { isIPv4, gitUrlProblem, parseLimaList, renderClashScript, toProject } from './parsers';
+import type { CoreManager } from './egress';
+import { gitUrlProblem, parseLimaList, renderClashScript, toProject } from './parsers';
 import { DEFAULT_LATENCY_URL, latencyUrlProblem } from './mihomo';
-import { MATRIX } from './report';
 import { runCommand, runScript } from './runner';
 import { shareLines, sharePathProblem, sharesFileContent } from './shares';
 import { vmPathProblem } from './vmpath';
 import { TERMINAL_APPS, THEMES } from './types';
-import { AlertTracker, deriveLevel, issuesFromCheck, issuesFromCore, issuesFromLeak, newestCheck, Throttle } from './status';
+import { AlertTracker, deriveLevel, issuesFromCheck, issuesFromCore, Throttle } from './status';
 import type {
   Caption,
   CheckRecord,
@@ -50,23 +47,18 @@ export interface Host {
   now?: () => number;
   /** 自带出口核心。没有时只支持 Clash Verge 模式 */
   core?: CoreManager;
-  /** Clash Verge 外部控制器的密钥（钥匙串）。没有时不能设置密钥 */
-  vergeSecret?: SecretStore;
 }
 
 interface Persisted {
-  lastQuick?: CheckRecord;
-  lastFull?: CheckRecord;
-  lastLeak?: CheckRecord;
+  lastCheck?: CheckRecord;
   lastPreflight?: CheckRecord;
   projects?: Project[];
   projectsAt?: number;
   claude?: { installed?: boolean; version?: string; checkedAt?: number };
-  matrix?: Record<string, number>;
   sessions?: SessionItem[];
   /** hook 事件文件读到的位置；没有时从文件末尾开始（不补发旧事件） */
   eventsOffset?: number;
-  /** 出口路径变了（换节点、重启或移除核心、切换出网方式）：在这之前的检查结论不再用来判断状态 */
+  /** 出口变了（换节点、重启核心、切换出网方式）：在这之前的检查结论不再用 */
   checksInvalidBefore?: number;
   /** 最近一次 share.sh status 列出的共享 */
   shares?: ShareItem[];
@@ -79,7 +71,7 @@ export function defaultSettings(home: string, dataDir: string): Settings {
     vmName: 'ccvm',
     limaHome: path.join(home, '.lima-ccvm'),
     stateDir: path.join(dataDir, 'state'),
-    checkIntervalMin: 10,
+    checkIntervalMin: 3,
     showCapsule: true,
     terminalApp: 'Terminal',
     launchAtLogin: false,
@@ -93,14 +85,15 @@ export function defaultSettings(home: string, dataDir: string): Settings {
     sharesEnabled: false,
     latencyTestUrl: DEFAULT_LATENCY_URL,
     theme: 'system',
-    clashController: '',
   };
 }
 
-const QUICK_TIMEOUT = 120_000;
+const CHECK_TIMEOUT = 90_000;
 const SHORT_TIMEOUT = 90_000;
-/** 这些任务运行时不做快速检查，也不开始别的独占任务（断流测试会停掉 TUN） */
-const EXCLUSIVE: JobKind[] = ['setup', 'leaktest', 'vm-start', 'vm-stop', 'shares', 'vm-upgrade'];
+/** 代理断开时更勤快地查，恢复了能马上看到 */
+const RETRY_MS = 30_000;
+/** 这些任务运行时不做检查，也不开始别的独占任务 */
+const EXCLUSIVE: JobKind[] = ['setup', 'vm-start', 'vm-stop', 'shares', 'vm-upgrade'];
 const CAPTION_MS = 8000;
 
 export class Controller extends EventEmitter {
@@ -126,8 +119,7 @@ export class Controller extends EventEmitter {
   private disposed = false;
   private pollingEvents = false;
   private vmSeq = 0;
-  /** 钥匙串里有没有外部控制器密钥：启动时读一次，之后跟着设置走（快照很频繁，不每次解密） */
-  private vergeSecretSet = false;
+  private retry?: NodeJS.Timeout;
   /** 「做完了」：同一项目 5 分钟内只弹一次；「在等你」：同一项目 1 分钟内一次 */
   private doneThrottle = new Throttle(5 * 60_000);
   private waitThrottle = new Throttle(60_000);
@@ -147,11 +139,8 @@ export class Controller extends EventEmitter {
     this.settings.sharesEnabled = this.settings.sharesEnabled === true;
     if (latencyUrlProblem(this.settings.latencyTestUrl)) this.settings.latencyTestUrl = DEFAULT_LATENCY_URL;
     if (!THEMES.includes(this.settings.theme)) this.settings.theme = 'system';
-    if (typeof this.settings.clashController !== 'string' || (this.settings.clashController && controllerAddressProblem(this.settings.clashController))) {
-      this.settings.clashController = '';
-    }
+    delete (this.settings as { clashController?: unknown }).clashController;
     this.state = readJson<Persisted>(this.file('app-state.json')) ?? {};
-    this.vergeSecretSet = !!host.vergeSecret?.get();
     this.jobs = new JobStore(path.join(host.dataDir, 'jobs'), host.kitDir, this.now);
     this.vm = { name: this.settings.vmName, status: 'Unknown' };
     this.kitVersion = (readText(path.join(host.kitDir, 'VERSION')) ?? 'unknown').trim();
@@ -165,7 +154,7 @@ export class Controller extends EventEmitter {
     await this.refreshVm();
     await this.refreshCore();
     void this.refreshShares();
-    if (this.vm.status === 'Running') void this.quickCheck('启动');
+    if (this.vm.status === 'Running') void this.quickCheck();
     this.timers.push(setInterval(() => this.pollJobs(), 2000));
     this.timers.push(setInterval(() => void this.refreshVm().then(() => this.refreshCore()), 15_000));
     this.timers.push(setInterval(() => this.expireCaptions(), 1000));
@@ -179,33 +168,25 @@ export class Controller extends EventEmitter {
     for (const t of this.timers) clearInterval(t);
     if (this.checkTimer) clearInterval(this.checkTimer);
     if (this.pending) clearTimeout(this.pending);
+    if (this.retry) clearTimeout(this.retry);
     this.removeAllListeners();
   }
 
   private armCheckTimer(): void {
     if (this.checkTimer) clearInterval(this.checkTimer);
-    const ms = Math.max(2, this.settings.checkIntervalMin) * 60_000;
-    this.checkTimer = setInterval(() => void this.quickCheck('定时'), ms);
+    const ms = Math.max(1, this.settings.checkIntervalMin) * 60_000;
+    this.checkTimer = setInterval(() => void this.quickCheck(), ms);
   }
 
   /** Mac 唤醒、切换网络后：等几秒网络稳定再查 */
-  trigger(reason: 'wake' | 'network', delayMs = 5000): void {
+  trigger(_reason: 'wake' | 'network', delayMs = 5000): void {
     if (this.pending) clearTimeout(this.pending);
     this.pending = setTimeout(() => {
       this.pending = undefined;
       void (async () => {
-        // 自带核心：先跟上网卡（改绑 / 没网卡就停 / 网卡回来恢复），再检查
-        if (this.builtin() && this.host.core) {
-          try {
-            const r = await this.host.core.onNetworkChange();
-            if (r === 'rebound') this.caption('busy', `网络切换了，出口核心已改绑到 ${(await this.host.core.status()).iface ?? '新网卡'}`);
-          } catch (err) {
-            this.caption('error', `出口核心没能跟上网络切换：${(err as Error).message}`);
-          }
-        }
         await this.refreshVm();
         await this.refreshCore();
-        await this.quickCheck(reason === 'wake' ? '唤醒' : '网络切换');
+        await this.quickCheck();
       })();
     }, delayMs);
   }
@@ -249,25 +230,23 @@ export class Controller extends EventEmitter {
   private scheduleQuick(delayMs = 3000): void {
     const t = setTimeout(() => {
       this.later.delete(t);
-      void this.refreshCore().then(() => this.quickCheck('出口核心变化'));
+      void this.refreshCore().then(() => this.quickCheck());
     }, delayMs);
     this.later.add(t);
   }
 
-  /** 出口路径变了：旧的检查结论作废，状态先变灰「等待检查」，直到下一次检查 */
+  /** 出口变了：旧的检查结论作废，直到下一次检查 */
   private invalidateChecks(): void {
     this.state.checksInvalidBefore = this.now();
     this.save();
   }
 
-  /** 用来判断状态的那次检查：取较新的一次，但出口路径变化之前的不算 */
   private currentCheck(): CheckRecord | undefined {
-    const last = newestCheck(this.state.lastQuick, this.state.lastFull);
+    const last = this.state.lastCheck;
     const before = this.state.checksInvalidBefore;
     return last && before && last.at < before ? undefined : last;
   }
 
-  /** 调用前主进程已经弹框确认过 */
   async setEgressMode(mode: EgressMode): Promise<Settings> {
     if (mode !== 'builtin' && mode !== 'clash-verge') throw new Error('未知的出网方式');
     if (mode === this.settings.egressMode) return this.settings;
@@ -283,7 +262,7 @@ export class Controller extends EventEmitter {
     let startError: Error | undefined;
     if (mode === 'builtin' && core) {
       const st = await core.status();
-      if (st.node && !st.pending) {
+      if (st.node) {
         try {
           await core.start();
         } catch (err) {
@@ -310,11 +289,10 @@ export class Controller extends EventEmitter {
     return r;
   }
 
-  /** 调用前主进程已经弹框确认过（换节点或确认节点变化时） */
   async selectNode(name: string) {
     const pinned = await this.requireCore().selectNode(name);
     this.invalidateChecks();
-    this.caption('busy', `出口核心改用「${pinned.name}」，正在检查出口`);
+    this.caption('busy', `已切换到「${pinned.name}」`);
     await this.refreshCore();
     this.scheduleQuick();
     return pinned;
@@ -342,10 +320,6 @@ export class Controller extends EventEmitter {
   async setCoreOptions(opts: { autoUpdate?: boolean; viaClashVerge?: boolean }) {
     this.requireCore().setOptions(opts);
     await this.refreshCore();
-  }
-
-  coreConnections() {
-    return this.requireCore().connections();
   }
 
   async latencyTest() {
@@ -389,22 +363,33 @@ export class Controller extends EventEmitter {
   }
 
   // ------------------------------------------------------------------ 检查
-  async quickCheck(_reason = '手动'): Promise<void> {
-    // init() 拿到登录 shell 的 PATH 之前不检查：否则会用默认 PATH 找错 limactl / uname，得出错误结论
+  async quickCheck(): Promise<void> {
+    // init() 拿到登录 shell 的 PATH 之前不检查：否则会用默认 PATH 找错 limactl
     if (this.path === undefined || this.disposed || this.checking || this.jobs.runningOf(EXCLUSIVE)) return;
     if (this.vm.status !== 'Running') return;
     this.checking = true;
     this.changed();
     try {
-      const result = await this.run('check.sh', ['--quick'], QUICK_TIMEOUT);
-      this.state.lastQuick = toRecord('quick', result);
+      const result = await this.run('check.sh', [], CHECK_TIMEOUT);
+      this.state.lastCheck = toRecord('check', result);
       this.save();
-      // 有共享时顺带核对 VM 里的映射还在不在（VM 重启、bindfs 退出后会掉）
       if (this.state.shares?.length) void this.refreshShares();
     } finally {
       this.checking = false;
+      this.armRetry();
       this.changed();
     }
+  }
+
+  /** 检查没通过时 30 秒后再查一次，直到恢复 */
+  private armRetry(): void {
+    if (this.retry) clearTimeout(this.retry);
+    this.retry = undefined;
+    if (this.disposed || !this.state.lastCheck || this.state.lastCheck.ok) return;
+    this.retry = setTimeout(() => {
+      this.retry = undefined;
+      void this.refreshCore().then(() => this.quickCheck());
+    }, RETRY_MS);
   }
 
   async preflight(): Promise<CheckRecord> {
@@ -413,15 +398,6 @@ export class Controller extends EventEmitter {
     this.save();
     this.changed();
     return this.state.lastPreflight;
-  }
-
-  fullCheck(): string {
-    return this.startJob('check-full', '完整验收', 'check.sh', []);
-  }
-
-  leaktest(): string {
-    if (this.jobs.runningOf(['clone'])) throw new Error('克隆进行中，等它结束再做断流测试');
-    return this.startJob('leaktest', '断流测试', 'leaktest.sh', [], ['leak.capture_control', 'leak.capture_bypass']);
   }
 
   setup(): string {
@@ -476,31 +452,14 @@ export class Controller extends EventEmitter {
     const result = job.result;
     const ok = job.state === 'done';
     switch (job.kind) {
-      case 'check-full':
-        if (result && job.state !== 'cancelled') this.state.lastFull = toRecord('full', result);
-        this.caption(ok ? 'ok' : 'error', ok ? '完整验收通过' : `完整验收没有通过：${job.reason ?? ''}`);
-        break;
-      case 'leaktest':
-        if (result && job.state !== 'cancelled') this.state.lastLeak = toRecord('leak', result);
-        this.caption(ok ? 'ok' : 'error', ok ? leakSummary(result) : `断流测试没有通过：${job.reason ?? ''}`);
-        // 自带核心升级后，断流测试通过才算接受了新版本
-        if (ok && this.builtin()) this.host.core?.acceptVersion();
-        void this.refreshCore().then(() => this.quickCheck('断流测试后'));
-        break;
       case 'setup':
-        if (result) {
-          const leak = result.checks.filter((c) => c.id.startsWith('leak.'));
-          if (leak.length && job.state !== 'cancelled') {
-            this.state.lastLeak = { kind: 'leak', at: result.finishedAt, ok: ok && leak.every((c) => c.ok), checks: leak, values: result.values, reason: job.reason };
-          }
-        }
         this.caption(ok ? 'ok' : 'error', ok ? '部署完成，可以登录 Claude 了' : `部署没有完成：${job.reason ?? ''}`);
-        void this.refreshVm().then(() => this.quickCheck('部署后'));
+        void this.refreshVm().then(() => this.quickCheck());
         void this.refreshClaude();
         break;
       case 'vm-start':
       case 'vm-stop':
-        void this.refreshVm().then(() => this.quickCheck('启停后'));
+        void this.refreshVm().then(() => this.quickCheck());
         if (!ok) this.caption('error', `${job.title}失败：${job.reason ?? ''}`);
         break;
       case 'shares':
@@ -509,13 +468,11 @@ export class Controller extends EventEmitter {
         void this.refreshShares()
           .then(() => this.refreshVm())
           .then(() => this.refreshCore())
-          .then(() => this.quickCheck('应用共享后'));
+          .then(() => this.quickCheck());
         break;
       case 'vm-upgrade':
-        // upgrade.sh 更新完会跑完整验收，事件并在同一个流里
-        if (result && job.state !== 'cancelled' && result.values.mode === 'full') this.state.lastFull = toRecord('full', result);
-        this.caption(ok ? 'ok' : 'error', ok ? 'VM 已更新，完整验收通过' : `VM 更新没有完成：${job.reason ?? ''}`);
-        void this.refreshProjects();
+        this.caption(ok ? 'ok' : 'error', ok ? 'VM 已更新' : `VM 更新没有完成：${job.reason ?? ''}`);
+        void this.refreshProjects().then(() => this.quickCheck());
         break;
       case 'push':
       case 'pull':
@@ -529,40 +486,6 @@ export class Controller extends EventEmitter {
       }
     }
     this.save();
-  }
-
-  // ------------------------------------------------------------------ Clash Verge 外部控制器（只读）
-  /** 地址只能经这里改（要校验）；secret 不传表示不改，null 表示清除。密钥不进设置文件 */
-  setClashController(opts: { address: string; secret?: string | null }): Settings {
-    const address = String(opts.address ?? '').trim();
-    if (address) {
-      const problem = controllerAddressProblem(address);
-      if (problem) throw new Error(problem);
-    }
-    if (opts.secret !== undefined) {
-      if (!this.host.vergeSecret) throw new Error('这个环境不能保存密钥');
-      if (opts.secret === null || opts.secret === '') this.host.vergeSecret.set(undefined);
-      else {
-        if (opts.secret.length > 512 || /[\r\n\0]/.test(opts.secret)) throw new Error('密钥格式不对');
-        this.host.vergeSecret.set(opts.secret);
-      }
-      this.vergeSecretSet = opts.secret !== null && opts.secret !== '';
-    }
-    return this.saveSettings({ ...this.settings, clashController: address });
-  }
-
-  private vergeAddress(): string {
-    if (!this.settings.clashController) throw new Error('还没有填 Clash Verge 外部控制器的地址');
-    return this.settings.clashController;
-  }
-
-  async testClashController(): Promise<{ version: string }> {
-    const v = (await vergeGet(this.vergeAddress(), this.host.vergeSecret?.get(), '/version')) as { version?: unknown };
-    return { version: typeof v?.version === 'string' ? v.version : '未知' };
-  }
-
-  clashConnections(): Promise<VergeConnections> {
-    return readVergeConnections(this.vergeAddress(), this.host.vergeSecret?.get(), this.settings.nodeName);
   }
 
   // ------------------------------------------------------------------ 共享文件夹
@@ -691,23 +614,9 @@ export class Controller extends EventEmitter {
     return this.startJob('pull', `下载 ${path.posix.basename(src)}`, 'files.sh', ['pull', src, dest, ...(overwrite ? ['--force'] : [])]);
   }
 
-  // ------------------------------------------------------------------ 基线
-  async previewRebaseline(): Promise<RunResult> {
-    return this.run('rebaseline.sh', ['--dry-run'], QUICK_TIMEOUT);
-  }
-
-  /** 调用前必须已经二次确认（Electron 层用系统对话框） */
-  async acceptRebaseline(ip: string): Promise<RunResult> {
-    if (!isIPv4(ip)) throw new Error('不是有效的 IPv4');
-    const result = await this.run('rebaseline.sh', ['--accept', ip], QUICK_TIMEOUT);
-    if (result.ok) this.caption('ok', `基线已更新为 ${ip}`);
-    await this.quickCheck('更新基线后');
-    return result;
-  }
-
   // ------------------------------------------------------------------ 项目与 Claude
   async refreshProjects(): Promise<void> {
-    if (this.vm.status !== 'Running' || this.jobs.runningOf(['leaktest', 'setup'])) return;
+    if (this.vm.status !== 'Running' || this.jobs.runningOf(['setup'])) return;
     const result = await this.run('workspace.sh', ['list']);
     if (result.ok) {
       this.state.projects = result.items.map(toProject);
@@ -822,7 +731,7 @@ export class Controller extends EventEmitter {
       if (patch[key] !== undefined) (next as unknown as Record<string, unknown>)[key] = patch[key];
     }
     const minutes = Number(next.checkIntervalMin);
-    next.checkIntervalMin = Math.min(120, Math.max(2, Math.round(Number.isFinite(minutes) ? minutes : 10)));
+    next.checkIntervalMin = Math.min(60, Math.max(1, Math.round(Number.isFinite(minutes) ? minutes : 3)));
     if (!TERMINAL_APPS.includes(next.terminalApp)) next.terminalApp = 'Terminal';
     if (!THEMES.includes(next.theme)) next.theme = 'system';
     // 出网方式只能经 setEgressMode 切换（要启停核心）
@@ -839,30 +748,14 @@ export class Controller extends EventEmitter {
     this.settings = next;
     writeJson(this.file('settings.json'), next);
     if (target) {
-      // 指向了另一个 VM 或另一份基线：旧结论作废（手动验收矩阵也属于原来的 VM）
+      // 指向了另一个 VM：旧结论作废
       this.state = {};
       this.save();
-      void this.refreshVm().then(() => this.refreshShares()).then(() => this.quickCheck('设置变更'));
+      void this.refreshVm().then(() => this.refreshShares()).then(() => this.quickCheck());
     }
     if (interval) this.armCheckTimer();
     this.changed();
     return next;
-  }
-
-  canOpenSession(): { ok: boolean; reason?: string } {
-    const snap = this.snapshot();
-    if (snap.newSessionsBlocked) return { ok: false, reason: `${snap.headline}：${snap.detail}` };
-    return { ok: true };
-  }
-
-  setMatrix(id: string, done: boolean): void {
-    if (!MATRIX.some((m) => m.id === id && !m.auto)) throw new Error('未知的验收项');
-    const matrix = { ...(this.state.matrix ?? {}) };
-    if (done) matrix[id] = this.now();
-    else delete matrix[id];
-    this.state.matrix = matrix;
-    this.save();
-    this.changed();
   }
 
   // ------------------------------------------------------------------ 字幕
@@ -886,17 +779,16 @@ export class Controller extends EventEmitter {
 
   // ------------------------------------------------------------------ 快照
   issues(): Issue[] {
-    const last = this.currentCheck();
     const core = this.builtin() ? issuesFromCore(this.coreStatus) : [];
-    // 核心自己的问题说得更清楚；它导致的「专用入口不可用」不再重复报
-    const fromCheck = issuesFromCheck(last).filter((i) => !(core.length && i.kind === 'listener_down'));
-    return [...core, ...fromCheck, ...issuesFromLeak(this.state.lastLeak)];
+    if (this.vm.status !== 'Running') return core;
+    // 核心自己的问题说得更清楚；它导致的「代理断开」不再重复报
+    const fromCheck = issuesFromCheck(this.currentCheck()).filter((i) => !(core.length && i.kind === 'proxy_down'));
+    return [...core, ...fromCheck];
   }
 
   snapshot(): Snapshot {
     const now = this.now();
-    const coreIssues = this.builtin() ? issuesFromCore(this.coreStatus) : [];
-    const issues = this.vm.status === 'Running' ? this.issues() : [...coreIssues, ...issuesFromLeak(this.state.lastLeak)];
+    const issues = this.issues();
     const jobs = this.jobs.list();
     const last = this.currentCheck();
     const { level, headline, detail } = deriveLevel({ issues, vm: this.vm, lastCheck: last, jobs, intervalMin: this.settings.checkIntervalMin, now });
@@ -905,16 +797,13 @@ export class Controller extends EventEmitter {
       level,
       headline,
       detail,
-      egress: { host: v.host_egress || undefined, vm: v.vm_egress || undefined, baseline: v.baseline || readBaseline(this.settings.stateDir) },
+      egress: { host: v.host_egress || undefined, vm: v.vm_egress || undefined },
       vm: this.vm,
-      lastQuick: this.state.lastQuick,
-      lastFull: this.state.lastFull,
-      lastLeak: this.state.lastLeak,
+      lastCheck: last,
       lastPreflight: this.state.lastPreflight,
       lastCheckAt: last?.at,
       checking: this.checking,
       issues,
-      newSessionsBlocked: level === 'error',
       jobs: jobs.slice(0, 20),
       projects: this.state.projects ?? [],
       sessions: this.state.sessions ?? [],
@@ -925,13 +814,10 @@ export class Controller extends EventEmitter {
       captions: this.captions,
       shares: this.sharesState(),
       vmPackages: vmPackagesState(this.state.vmPackages),
-      clashController: { address: this.settings.clashController, secretSet: this.vergeSecretSet },
-      matrix: this.state.matrix ?? {},
       settings: this.settings,
       paths: {
         kit: this.host.kitDir,
         state: this.settings.stateDir,
-        baselineFile: path.join(this.settings.stateDir, 'expected-ip.txt'),
         jobs: path.join(this.host.dataDir, 'jobs'),
       },
       kitVersion: this.kitVersion,
@@ -980,20 +866,6 @@ export function vmPackagesState(p: Persisted['vmPackages']): Snapshot['vmPackage
 
 export function toRecord(kind: CheckRecord['kind'], result: RunResult): CheckRecord {
   return { kind, at: result.finishedAt, ok: result.ok, reason: result.reason, checks: result.checks, values: result.values };
-}
-
-export function leakSummary(result: RunResult | undefined): string {
-  const v = result?.values ?? {};
-  if (!result) return '断流测试结束';
-  const ctrl = latestChecks(result.checks).get('leak.capture_control');
-  return ctrl?.ok
-    ? `断流测试通过：经专用入口 ${v.capture_control ?? '?'} 个包 · 旁路 ${v.capture_bypass ?? '?'} 个`
-    : '断流测试结束';
-}
-
-function readBaseline(stateDir: string): string | undefined {
-  const text = readText(path.join(stateDir, 'expected-ip.txt'))?.trim();
-  return isIPv4(text) ? text : undefined;
 }
 
 function readText(file: string): string | undefined {

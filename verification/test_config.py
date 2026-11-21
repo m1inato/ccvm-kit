@@ -26,7 +26,7 @@ class LocalConfigTests(unittest.TestCase):
                               env=env, text=True, capture_output=True)
 
     def values(self, **overrides):
-        result = self.run_bash('printf "%s\\n" "$VM" "$LIMA_HOME" "$STATE" "$BASELINE"', **overrides)
+        result = self.run_bash('printf "%s\\n" "$VM" "$LIMA_HOME" "$STATE"', **overrides)
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout.splitlines()
 
@@ -39,12 +39,11 @@ class LocalConfigTests(unittest.TestCase):
 
     def test_defaults_do_not_inherit_foreign_lima_home(self):
         got = self.values(LIMA_HOME=str(self.root / "unrelated-lima"))
-        self.assertEqual(got, ["ccvm", str(Path.home() / ".lima-ccvm"), str(KIT / "state"),
-                               str(KIT / "state/expected-ip.txt")])
+        self.assertEqual(got, ["ccvm", str(Path.home() / ".lima-ccvm"), str(KIT / "state")])
 
     def test_local_settings_preserve_spaces_and_unicode(self):
         home, state = self.write_config()
-        self.assertEqual(self.values(), ["local-vm", str(home), str(state), str(state / "expected-ip.txt")])
+        self.assertEqual(self.values(), ["local-vm", str(home), str(state)])
         self.assertFalse(home.exists())
         self.assertFalse(state.exists())
 
@@ -53,17 +52,7 @@ class LocalConfigTests(unittest.TestCase):
         home, state = self.root / "override-home", self.root / "override-state"
         self.assertEqual(self.values(CCVM_NAME="override-vm", CCVM_LIMA_HOME=str(home),
                                      CCVM_STATE_DIR=str(state)),
-                         ["override-vm", str(home), str(state), str(state / "expected-ip.txt")])
-
-    def test_baseline_uses_selected_state_directory(self):
-        _, state = self.write_config()
-        state.mkdir()
-        baseline = state / "expected-ip.txt"
-        baseline.write_text("203.0.113.7\n")
-        result = self.run_bash("baseline")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "203.0.113.7\n")
-        self.assertEqual(baseline.read_text(), "203.0.113.7\n")
+                         ["override-vm", str(home), str(state)])
 
     def test_missing_explicit_config_fails(self):
         result = self.run_bash("true", CCVM_CONFIG_FILE=str(self.root / "missing.env"))
@@ -76,21 +65,12 @@ class LocalConfigTests(unittest.TestCase):
             with self.subTest(overrides=overrides):
                 self.assertNotEqual(self.run_bash("true", **overrides).returncode, 0)
 
-    def test_lima_global_overrides_still_fail_with_force(self):
-        home = self.root / "lima"
-        (home / "_config").mkdir(parents=True)
-        (home / "_config/override.yaml").write_text("mounts: []\n")
-        result = self.run_bash("require_clean_lima_home", CCVM_LIMA_HOME=str(home), CCVM_FORCE="1")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("发现 Lima 全局配置", result.stderr)
-
     def test_setup_messages_work_with_system_bash(self):
         # Stop before any VM creation. This catches the Bash 3.2 variable/Chinese
         # punctuation regression in the real setup.sh, rather than a copied string.
         commands = {
             "uname": 'case "$1" in -s) echo Darwin;; -m) echo arm64;; *) exit 90;; esac',
             "curl": "printf 'ip=203.0.113.7\\n'",
-            "netstat": "printf 'tcp4 0 0 127.0.0.1.17897 *.* LISTEN\\n'",
             "limactl": 'case "$1" in --version) echo "limactl version 2.2.1";; list) exit 0;; template) exit 73;; *) exit 91;; esac',
         }
         bin_dir = self.root / "bin"
@@ -105,7 +85,7 @@ class LocalConfigTests(unittest.TestCase):
                                 text=True, capture_output=True)
         self.assertEqual(result.returncode, 73, result.stdout + result.stderr)
         self.assertIn("203.0.113.7", result.stdout)
-        self.assertIn("2/5", result.stdout)
+        self.assertIn("2/4", result.stdout)
         self.assertNotIn("unbound variable", result.stderr)
         self.assertFalse((self.root / "new-vm").exists())
 

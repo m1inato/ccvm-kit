@@ -4,29 +4,33 @@
 
 第一版桌面端（`app/`），以及它用到的脚本接口。命令行用法保持兼容。
 
+### 网络
+
+- 状态只看代理通不通：通着就是「已连接」，出口 IP 只显示；代理断了 VM 自己断网，恢复后自动变绿。
+- 不再记录出口基线：换节点、供应商换 IP 都照常使用。`rebaseline.sh` 和 `state/expected-ip.txt` 已移除。
+- 检查缩成三项：Mac 代理入口、VM 的防火墙与 TUN、VM 经代理出网。代理断开时每 30 秒查一次。
+- 进入 VM、开新会话不再先过检查。
+- 移除断流测试（`leaktest.sh`）、Lima 全局配置与实际配置核对、回环监听核对。
+
 ### 桌面端
 
-- 菜单栏状态点与桌面胶囊；首页、项目页、安全页、设置、欢迎页。出错时系统通知一次，并且不再开新会话。
-- 两种出网方式：CCVM 自带核心（Homebrew 的 mihomo，以 LaunchAgent 运行，只支持 Clash YAML 订阅，节点变化先断网再确认）或 Clash Verge。
+- 新图标；界面改为左侧导航加大标题的布局，浅色、深色主题。
+- 两种出网方式：CCVM 自带核心（Homebrew 的 mihomo，以 LaunchAgent 运行，只支持 Clash YAML 订阅）或 Clash Verge。自带核心用 Mac 当前的网络，订阅里节点的地址或密码变了自动换上。
+- 「网络」页：状态、检查、出网方式、订阅与节点、测延迟。
 - 内嵌终端：会话跑在 VM 里 cc 的 tmux 中，关窗口只是断开；会话列表显示每个会话在跑什么、最后活动时间，可以改名。
-- 安全页：链路、连接、检查和断流测试在同一页；连接列表核对每条是否只经过选定节点，两种出网方式都支持（Clash Verge 需要打开它的外部控制器，只读）。
-- 测延迟和 Clash Verge 口径一致（统一延迟，测试地址可设置）。
 - 外部终端：Terminal、iTerm、Ghostty；命令行入口 `ccvm`，在任意终端里 `ccvm`、`ccvm <项目>`、`ccvm -a <会话>`。
-- 共享文件夹（可选，默认关闭）：把选定的 Mac 文件夹读写挂进 VM。这会削弱隔离，风险见 `docs/desktop-app.md`。
+- 菜单栏状态点与桌面胶囊；代理断开时系统通知一次。
+- 共享文件夹（可选，默认关闭）：把选定的 Mac 文件夹读写挂进 VM。
 - 文件：浏览 VM 里 cc 的家目录，上传、下载、新建、删除。
 - 「Claude 做完了」提醒（可选）。
 - VM 需要更新时首页提示，一键更新。
-- 浅色、深色主题。
 
 ### 脚本
 
 - 宿主脚本支持 `--json`，输出带稳定 id 的事件，格式见 `docs/events.md`。
 - 新增 `vm.sh`、`preflight.sh`、`workspace.sh`、`hooks.sh`、`share.sh`、`files.sh`、`upgrade.sh`。
-- `check.sh --quick`；`rebaseline.sh --dry-run` 与 `--accept IP`。
-- `enter.sh`：`--project`、`--session`（含 `auto`）、`--attach`。
-- `upgrade.sh` 按级别更新已部署的 VM，`setup.sh` 每次也会运行它：补装 `git`、`tmux`；让 networkd 保留 TUN 的策略路由，并加 TUN 看门狗，系统更新重启网络服务后不再断网。
-- 快速检查新增 `vm.tun_routes`；`lima.effective_config` 与 `vm.no_host_mounts` 按允许的共享文件夹核对。
-- 断流测试被中断时也会恢复 TUN。
+- `enter.sh`：`--project`、`--session`（含 `auto`）、`--attach`；VM 没运行时先启动。
+- `upgrade.sh` 按级别更新已部署的 VM，`setup.sh` 每次也会运行它：补装 `git`、`tmux`；加 TUN 看门狗，系统更新重启网络服务后不再断网。
 - 不再生成校验文件，规则见 `AGENTS.md`。
 
 ## 2.2.0 — 2026-11-04
