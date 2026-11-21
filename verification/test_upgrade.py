@@ -119,6 +119,11 @@ class TunRouteFixTests(ScriptHarness):
     def watchdog(self, active=True, rules=True, routes=True, since_us=0):
         text = (KIT / "guest/upgrade.sh").read_text()
         program = re.search(r"<<'WDEOF' \|\| return 1\n(.*?)\nWDEOF", text, re.S).group(1)
+        uptime = self.write("uptime", "120.50 80.00\n")
+        self.stub("cut", 'if [ "$#" -eq 3 ] && [ "$3" = /proc/uptime ]; then\n'
+                  '  set -- "$1" "$2" "$STUB_UPTIME_FILE"\n'
+                  'fi\n'
+                  'exec /usr/bin/cut "$@"')
         self.stub("systemctl", 'case "$1" in\n'
                   '  is-active) [ "$STUB_ACTIVE" = 1 ] ;;\n'
                   '  show) echo "$STUB_SINCE" ;;\n'
@@ -134,7 +139,8 @@ class TunRouteFixTests(ScriptHarness):
             self.log.unlink()
         r = subprocess.run(["/bin/sh", "-s"], input=program, text=True, capture_output=True, timeout=30,
                            env=self.env | {"STUB_ACTIVE": "1" if active else "0", "STUB_RULES": "1" if rules else "0",
-                                           "STUB_ROUTES": "1" if routes else "0", "STUB_SINCE": str(since_us)})
+                                           "STUB_ROUTES": "1" if routes else "0", "STUB_SINCE": str(since_us),
+                                           "STUB_UPTIME_FILE": str(uptime)})
         self.assertEqual(r.returncode, 0, r.stderr)
         return self.log.read_text() if self.log.exists() else ""
 
@@ -143,8 +149,7 @@ class TunRouteFixTests(ScriptHarness):
         self.assertIn("restart ccvm-tun.service", self.watchdog(rules=False))   # ip rule 没了
         self.assertIn("restart ccvm-tun.service", self.watchdog(routes=False))  # 表 2022 空了
         self.assertEqual(self.watchdog(active=False, rules=False), "")          # 断流测试停了 TUN：不管
-        uptime_us = int(float(open("/proc/uptime").read().split()[0]) * 1_000_000)
-        self.assertEqual(self.watchdog(rules=False, since_us=uptime_us), "")    # 刚启动：sing-box 还在建路由
+        self.assertEqual(self.watchdog(rules=False, since_us=110_000_000), "")  # 启动 10 秒：sing-box 还在建路由
 
     def test_selfcheck_reports_missing_policy_routes(self):
         text = (KIT / "guest/selfcheck.sh").read_text()
