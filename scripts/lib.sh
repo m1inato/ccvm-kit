@@ -149,7 +149,20 @@ trace_ip() { awk -F= '$1=="ip"{gsub(/\r/,"",$2); print $2}'; }
 # Mac → Clash 专用入口 → 节点 的出口 IP。
 # --noproxy '' 不能省：curl 的 NO_PROXY/no_proxy 即使在指定了 --proxy 时也会让请求绕过代理直连，
 # 只有 --noproxy '' 能覆盖它（见 curl 手册 --noproxy 与 ENVIRONMENT 一节）。
-host_ip() { curl -fsS --max-time 20 --noproxy '' --proxy "socks5h://127.0.0.1:$PORT" "$TRACE_URL" | trace_ip; }
+host_ip() {
+  local limit response ip
+  # 首次没测到出口时新建连接再测一次，两次合计最多等待 20 秒。
+  for limit in 8 12; do
+    if response="$(curl -fsS --max-time "$limit" --noproxy '' --proxy "socks5h://127.0.0.1:$PORT" "$TRACE_URL")"; then
+      ip="$(printf '%s\n' "$response" | trace_ip)"
+      if [ -n "$ip" ]; then
+        printf '%s\n' "$ip"
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
 
 vm_status() { limactl list --format '{{.Status}}' "$VM" 2>/dev/null || true; }
 vm() { limactl shell --workdir=/ "$VM" "$@"; }

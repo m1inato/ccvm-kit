@@ -144,6 +144,19 @@ class EventTests(ScriptHarness):
         self.assertIn("全部通过", result.stderr)  # human text moves to stderr in JSON mode
         self.assertIn("sudo bash -s -- 203.0.113.7 quick", self.log.read_text())
 
+    def test_check_retries_incomplete_host_probe(self):
+        self.stub("curl", """
+if [ ! -f "$STUB_LOG.probe" ]; then
+    touch "$STUB_LOG.probe"
+    printf 'ip=198.51.100.9\\n'
+    exit 28
+fi
+printf 'ip=203.0.113.7\\n'
+""")
+        result = self.run_script("check.sh", "--quick", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.values(self.events(result))["host_egress"], "203.0.113.7")
+
     def test_check_json_reports_egress_change(self):
         self.selfcheck.write_text(SELFCHECK_OK.replace("PASS egress.vm_matches_baseline VM 出口 = 基线 203.0.113.7",
                                                        "FAIL egress.vm_matches_baseline VM 出口 198.51.100.9 ≠ 基线 203.0.113.7")
